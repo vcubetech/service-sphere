@@ -1,0 +1,459 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  AUDITOR
+  ADMIN
+}
+
+enum AuditorStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  SUSPENDED
+}
+
+enum TaxpayerType {
+  INDIVIDUAL
+  HUF
+  FIRM
+  LLP
+  COMPANY
+  TRUST
+  AOP
+  BOI
+}
+
+enum TaxRegime {
+  OLD_REGIME
+  NEW_REGIME
+}
+
+enum ITRForm {
+  ITR_1
+  ITR_2
+  ITR_3
+  ITR_4
+  ITR_5
+  ITR_6
+  ITR_7
+}
+
+enum TaxReturnStatus {
+  DRAFT
+  DOCUMENT_PENDING
+  UNDER_REVIEW
+  QUERY_RAISED
+  APPROVED
+  READY_TO_FILE
+  FILED
+  VERIFIED
+  COMPLETED
+  REJECTED
+}
+
+enum AuditStatus {
+  PENDING
+  ASSIGNED
+  IN_PROGRESS
+  QUERY_RAISED
+  APPROVED
+  COMPLETED
+  REJECTED
+}
+
+enum DocumentType {
+  PAN_CARD
+  AADHAAR_CARD
+  FORM_16
+  BANK_STATEMENT
+  SALARY_SLIP
+  FORM_26AS
+  AIS
+  TIS
+  INVESTMENT_PROOF
+  BUSINESS_PROOF
+  BALANCE_SHEET
+  PROFIT_LOSS
+  AUDIT_REPORT
+  OTHER
+}
+
+enum DocumentStatus {
+  UPLOADED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  UPI
+  BANK_TRANSFER
+  CARD
+  CASH
+  OTHER
+}
+
+enum FilingType {
+  ORIGINAL
+  REVISED
+  BELATED
+  UPDATED
+}
+
+enum IncomeType {
+  SALARY
+  HOUSE_PROPERTY
+  BUSINESS
+  CAPITAL_GAINS
+  OTHER_SOURCES
+}
+
+enum FindingSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// ---------------- USER ----------------
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  phone        String?  @unique
+  passwordHash String
+  role         Role     @default(CUSTOMER)
+  isActive     Boolean  @default(true)
+
+  customer     Customer?
+  auditor      Auditor?
+
+  uploadedDocuments Document[] @relation("UploadedDocuments")
+  payments          Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([role])
+}
+
+// ---------------- CUSTOMER ----------------
+
+model Customer {
+  id            String       @id @default(cuid())
+  userId        String       @unique
+  user          User         @relation(fields: [userId], references: [id])
+
+  panNumber     String       @unique
+  aadhaarNumber String?
+  dateOfBirth   DateTime?
+  taxpayerType  TaxpayerType @default(INDIVIDUAL)
+
+  fatherName    String?
+  address       String?
+  city          String?
+  state         String?
+  pincode       String?
+
+  businessName  String?
+  gstNumber     String?
+
+  taxReturns    TaxReturn[]
+  documents     Document[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------- AUDITOR / CA ----------------
+
+model Auditor {
+  id               String        @id @default(cuid())
+  userId           String        @unique
+  user             User          @relation(fields: [userId], references: [id])
+
+  membershipNumber String?       @unique
+  firmName         String?
+  qualification    String?
+  experienceYears  Int           @default(0)
+  status           AuditorStatus @default(PENDING)
+  city             String?
+  isAvailable      Boolean       @default(true)
+
+  taxReturns       TaxReturn[]
+  auditAssignments AuditAssignment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------- FINANCIAL YEAR ----------------
+
+model FinancialYear {
+  id             String   @id @default(cuid())
+  financialYear  String   @unique
+  assessmentYear String   @unique
+  startDate      DateTime
+  endDate        DateTime
+  filingDueDate  DateTime?
+  isActive       Boolean  @default(true)
+
+  taxReturns TaxReturn[]
+
+  createdAt DateTime @default(now())
+}
+
+// ---------------- TAX RETURN ----------------
+
+model TaxReturn {
+  id              String          @id @default(cuid())
+  returnNumber    String          @unique
+
+  customerId      String
+  customer        Customer        @relation(fields: [customerId], references: [id])
+
+  auditorId       String?
+  auditor         Auditor?        @relation(fields: [auditorId], references: [id])
+
+  financialYearId String
+  financialYear   FinancialYear   @relation(fields: [financialYearId], references: [id])
+
+  itrForm         ITRForm?
+  filingType      FilingType      @default(ORIGINAL)
+  taxRegime       TaxRegime       @default(NEW_REGIME)
+  status          TaxReturnStatus @default(DRAFT)
+
+  totalIncome     Decimal         @default(0) @db.Decimal(15,2)
+  totalDeductions Decimal         @default(0) @db.Decimal(15,2)
+  taxableIncome   Decimal         @default(0) @db.Decimal(15,2)
+  taxAmount       Decimal         @default(0) @db.Decimal(15,2)
+  taxPaid         Decimal         @default(0) @db.Decimal(15,2)
+  refundAmount    Decimal         @default(0) @db.Decimal(15,2)
+
+  acknowledgementNumber String?
+  filedAt               DateTime?
+  verifiedAt            DateTime?
+
+  incomeDetails   IncomeDetail[]
+  deductions      Deduction[]
+  taxComputation  TaxComputation?
+  documents       Document[]
+  auditAssignment AuditAssignment?
+  filingHistories FilingHistory[]
+  payments        Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId, financialYearId])
+  @@index([auditorId, status])
+  @@index([status])
+}
+
+// ---------------- INCOME DETAILS ----------------
+
+model IncomeDetail {
+  id           String     @id @default(cuid())
+  taxReturnId  String
+  taxReturn    TaxReturn  @relation(fields: [taxReturnId], references: [id])
+
+  incomeType   IncomeType
+  description  String?
+  employerName String?
+  grossAmount  Decimal    @default(0) @db.Decimal(15,2)
+  taxableAmount Decimal   @default(0) @db.Decimal(15,2)
+
+  tdsAmount    Decimal    @default(0) @db.Decimal(15,2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([taxReturnId, incomeType])
+}
+
+// ---------------- DEDUCTIONS ----------------
+
+model Deduction {
+  id            String    @id @default(cuid())
+  taxReturnId   String
+  taxReturn     TaxReturn @relation(fields: [taxReturnId], references: [id])
+
+  section       String
+  description   String?
+  amount        Decimal   @default(0) @db.Decimal(15,2)
+  eligibleAmount Decimal  @default(0) @db.Decimal(15,2)
+
+  createdAt DateTime @default(now())
+
+  @@index([taxReturnId, section])
+}
+
+// ---------------- TAX COMPUTATION ----------------
+
+model TaxComputation {
+  id               String    @id @default(cuid())
+  taxReturnId      String    @unique
+  taxReturn        TaxReturn @relation(fields: [taxReturnId], references: [id])
+
+  grossTotalIncome Decimal   @default(0) @db.Decimal(15,2)
+  exemptIncome     Decimal   @default(0) @db.Decimal(15,2)
+  deductions       Decimal   @default(0) @db.Decimal(15,2)
+  taxableIncome    Decimal   @default(0) @db.Decimal(15,2)
+
+  basicTax         Decimal   @default(0) @db.Decimal(15,2)
+  surcharge        Decimal   @default(0) @db.Decimal(15,2)
+  cess             Decimal   @default(0) @db.Decimal(15,2)
+  rebate           Decimal   @default(0) @db.Decimal(15,2)
+  tds              Decimal   @default(0) @db.Decimal(15,2)
+  advanceTax       Decimal   @default(0) @db.Decimal(15,2)
+  selfAssessmentTax Decimal  @default(0) @db.Decimal(15,2)
+  finalTax         Decimal   @default(0) @db.Decimal(15,2)
+
+  calculatedAt DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ---------------- DOCUMENT MANAGEMENT ----------------
+
+model Document {
+  id           String         @id @default(cuid())
+
+  customerId   String
+  customer     Customer       @relation(fields: [customerId], references: [id])
+
+  taxReturnId  String?
+  taxReturn    TaxReturn?     @relation(fields: [taxReturnId], references: [id])
+
+  uploadedById String
+  uploadedBy   User           @relation("UploadedDocuments", fields: [uploadedById], references: [id])
+
+  documentType DocumentType
+  fileName     String
+  fileUrl      String
+  fileSize     Int?
+  mimeType     String?
+  status       DocumentStatus @default(UPLOADED)
+  remarks      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId, documentType])
+  @@index([taxReturnId])
+}
+
+// ---------------- AUDIT ASSIGNMENT ----------------
+
+model AuditAssignment {
+  id          String      @id @default(cuid())
+
+  taxReturnId String      @unique
+  taxReturn   TaxReturn   @relation(fields: [taxReturnId], references: [id])
+
+  auditorId   String
+  auditor     Auditor     @relation(fields: [auditorId], references: [id])
+
+  status      AuditStatus @default(PENDING)
+  assignedAt  DateTime    @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  findings    AuditFinding[]
+  report      AuditReport?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------- AUDIT FINDINGS ----------------
+
+model AuditFinding {
+  id             String          @id @default(cuid())
+
+  assignmentId   String
+  assignment     AuditAssignment @relation(fields: [assignmentId], references: [id])
+
+  title          String
+  description    String
+  severity       FindingSeverity @default(MEDIUM)
+  recommendation String?
+  isResolved     Boolean         @default(false)
+  resolvedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([assignmentId, isResolved])
+}
+
+// ---------------- AUDIT REPORT ----------------
+
+model AuditReport {
+  id           String          @id @default(cuid())
+
+  assignmentId String          @unique
+  assignment   AuditAssignment @relation(fields: [assignmentId], references: [id])
+
+  reportNumber String          @unique
+  reportUrl    String?
+  remarks      String?
+  issuedAt     DateTime?
+
+  createdAt DateTime @default(now())
+}
+
+// ---------------- ITR FILING HISTORY ----------------
+
+model FilingHistory {
+  id             String          @id @default(cuid())
+
+  taxReturnId    String
+  taxReturn      TaxReturn       @relation(fields: [taxReturnId], references: [id])
+
+  previousStatus TaxReturnStatus?
+  currentStatus  TaxReturnStatus
+  remarks        String?
+  changedBy      String?
+  changedAt      DateTime        @default(now())
+
+  @@index([taxReturnId, changedAt])
+}
+
+// ---------------- PAYMENTS ----------------
+
+model Payment {
+  id          String        @id @default(cuid())
+
+  taxReturnId String
+  taxReturn   TaxReturn     @relation(fields: [taxReturnId], references: [id])
+
+  userId      String
+  user        User          @relation(fields: [userId], references: [id])
+
+  amount      Decimal       @db.Decimal(10,2)
+  status      PaymentStatus @default(PENDING)
+  method      PaymentMethod?
+  provider    String?
+  reference   String?       @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([taxReturnId, status])
+}

@@ -1,0 +1,1292 @@
+{
+  "info": {
+    "name": "Tax Filing API",
+    "description": "Requests for every endpoint documented in docs/API_DOCUMENTATION.md. Set baseUrl and log in with the appropriate demo account to populate the token variables. Financial-year, return, auditor, assignment, finding, document, and payment IDs can be set from responses or entered manually.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{customerToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "apiServerUrl",
+      "value": "http://localhost:4000",
+      "type": "string"
+    },
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000/api",
+      "type": "string"
+    },
+    {
+      "key": "customerToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "auditorToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "adminToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "financialYearId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "taxReturnId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "auditorId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "assignmentId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "findingId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "documentId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "paymentId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check (API base path)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/health",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "description": "GET /api/health. Returns { status, service }."
+        },
+        {
+          "name": "Health check (legacy path)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiServerUrl}}/health",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "description": "Legacy GET /health path."
+        }
+      ]
+    },
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Register customer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/register",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman Customer\",\n  \"email\": \"postman.customer+{{$timestamp}}@example.com\",\n  \"phone\": \"9876543210\",\n  \"password\": \"Demo@12345\",\n  \"role\": \"CUSTOMER\",\n  \"panNumber\": \"FGHIJ5678K\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "description": "Creates a customer account. Use a unique PAN/email if repeating this request."
+        },
+        {
+          "name": "Register auditor",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/register",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman Auditor\",\n  \"email\": \"postman.auditor+{{$timestamp}}@example.com\",\n  \"phone\": \"9876543211\",\n  \"password\": \"Demo@12345\",\n  \"role\": \"AUDITOR\",\n  \"membershipNumber\": \"POSTMAN-CA-001\",\n  \"firmName\": \"Postman Tax Associates\",\n  \"qualification\": \"Chartered Accountant\",\n  \"experienceYears\": 5,\n  \"city\": \"Coimbatore\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "description": "Creates an auditor account. Auditor status is initially pending."
+        },
+        {
+          "name": "Login customer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"customer@demo.com\",\n  \"password\": \"Demo@12345\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "description": "Signs in the seeded customer and stores the JWT in customerToken.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) { pm.collectionVariables.set('customerToken', pm.response.json().token); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login auditor",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"auditor@demo.com\",\n  \"password\": \"Demo@12345\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "description": "Signs in the seeded auditor and stores the JWT in auditorToken.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) { pm.collectionVariables.set('auditorToken', pm.response.json().token); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@demo.com\",\n  \"password\": \"Demo@12345\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "description": "Signs in the seeded admin and stores the JWT in adminToken.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) { pm.collectionVariables.set('adminToken', pm.response.json().token); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get current user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/auth/me",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{customerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "description": "Returns the authenticated user and customer/auditor profile."
+        }
+      ],
+      "description": "Demo logins use the seeded accounts when available. Login requests save JWTs to the corresponding collection variables."
+    },
+    {
+      "name": "Profiles",
+      "item": [
+        {
+          "name": "Get customer profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/customers/me",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{customerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update customer profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/customers/me",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{customerToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"aadhaarNumber\": \"123456789012\",\n  \"dateOfBirth\": \"1985-05-15T00:00:00.000Z\",\n  \"taxpayerType\": \"INDIVIDUAL\",\n  \"fatherName\": \"Ramesh Kumar\",\n  \"address\": \"12 Gandhi Road\",\n  \"city\": \"Coimbatore\",\n  \"state\": \"Tamil Nadu\",\n  \"pincode\": \"641001\",\n  \"businessName\": \"Arun Traders\",\n  \"gstNumber\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get auditor profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/auditors/me",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{auditorToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update auditor profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auditors/me",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{auditorToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"membershipNumber\": \"123456\",\n  \"firmName\": \"Priya Sharma & Associates\",\n  \"qualification\": \"Chartered Accountant\",\n  \"experienceYears\": 10,\n  \"city\": \"Coimbatore\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "List auditors (admin)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/auditors",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "description": "Returns auditors newest first. Save an auditor id to auditorId for assignment requests."
+        },
+        {
+          "name": "Update auditor status (admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auditors/{{auditorId}}/status",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"VERIFIED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tax Returns",
+      "item": [
+        {
+          "name": "List active financial years",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/tax-returns/financial-years",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{customerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "description": "Stores the first returned financial-year id in financialYearId.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const rows = pm.response.json(); if (pm.response.code === 200 && rows.length) { pm.collectionVariables.set('financialYearId', rows[0].id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List tax returns",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/tax-returns?page=1&limit=20",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{customerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "description": "Optional query parameters: page (default 1), limit (default 20, max 100)."
+        },
+        {
+          "name": "Create tax return",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tax-returns",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{customerToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"financialYearId\": \"{{financialYearId}}\",\n  \"itrForm\": \"ITR_3\",\n  \"filingType\": \"ORIGINAL\",\n  \"taxRegime\": \"NEW_REGIME\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "description": "Creates a draft return for the authenticated customer and saves its id to taxReturnId.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) { pm.collectionVariables.set('taxReturnId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get tax return details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/tax-returns/{{taxReturnId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{customerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "description": "Returns return details, income, deductions, documents, audit assignment, and filing history."
+        },
+        {
+          "name": "Update draft tax return",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tax-returns/{{taxReturnId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{customerToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"itrForm\": \"ITR_3\",\n  \"filingType\": \"ORIGINAL\",\n  \"taxRegime\": \"NEW_REGIME\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "description": "Only draft and query-raised returns can be updated by the customer."
+        },
+        {
+          "name": "Submit tax return",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/tax-returns/{{taxReturnId}}/submit",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{customerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "description": "Submits an editable customer return for review. No request body is required."
+        },
+        {
+          "name": "Add income detail",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tax-returns/{{taxReturnId}}/income",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{customerToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"incomeType\": \"SALARY\",\n  \"description\": \"Annual salary income\",\n  \"employerName\": \"ABC Technologies Pvt Ltd\",\n  \"grossAmount\": 600000,\n  \"taxableAmount\": 600000,\n  \"tdsAmount\": 45000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Add deduction",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tax-returns/{{taxReturnId}}/deductions",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{customerToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"section\": \"80C\",\n  \"description\": \"Eligible investment declaration\",\n  \"amount\": 50000,\n  \"eligibleAmount\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "description": "eligibleAmount must not exceed amount."
+        },
+        {
+          "name": "Save tax computation",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tax-returns/{{taxReturnId}}/computation",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{auditorToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"grossTotalIncome\": 1250000,\n  \"exemptIncome\": 0,\n  \"deductions\": 75000,\n  \"taxableIncome\": 1175000,\n  \"basicTax\": 96154,\n  \"surcharge\": 0,\n  \"cess\": 3846,\n  \"rebate\": 0,\n  \"tds\": 50000,\n  \"advanceTax\": 30000,\n  \"selfAssessmentTax\": 15000,\n  \"finalTax\": 15000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "description": "Requires the assigned auditor or an admin. All computation amounts are required and non-negative."
+        },
+        {
+          "name": "Update tax return filing status (admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tax-returns/{{taxReturnId}}/status",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"READY_TO_FILE\",\n  \"remarks\": \"Ready for filing\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "description": "Status transitions are enforced. acknowledgementNumber is required when status is FILED."
+        }
+      ],
+      "description": "List requests support page and limit query parameters. IDs use collection variables."
+    },
+    {
+      "name": "Documents and Audits",
+      "item": [
+        {
+          "name": "List documents",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/documents",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{customerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Add document metadata",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/documents",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{customerToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"taxReturnId\": \"{{taxReturnId}}\",\n  \"documentType\": \"PAN_CARD\",\n  \"fileName\": \"pan_card.pdf\",\n  \"fileUrl\": \"https://example.com/uploads/pan_card.pdf\",\n  \"fileSize\": 250000,\n  \"mimeType\": \"application/pdf\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Review document",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/documents/{{documentId}}/review",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{auditorToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"APPROVED\",\n  \"remarks\": \"Document verified\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "List audit assignments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/audits/assignments",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{auditorToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create audit assignment (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/audits/assignments",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"taxReturnId\": \"{{taxReturnId}}\",\n  \"auditorId\": \"{{auditorId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "description": "Return must be submitted and the auditor must be verified and available. Saves assignment id to assignmentId.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) { pm.collectionVariables.set('assignmentId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update audit assignment status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/audits/assignments/{{assignmentId}}/status",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{auditorToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Add audit finding",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/audits/assignments/{{assignmentId}}/findings",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{auditorToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Business income verification\",\n  \"description\": \"Reconcile business income with bank statements and financial statements.\",\n  \"severity\": \"MEDIUM\",\n  \"recommendation\": \"Upload a bank reconciliation statement.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "description": "Saves the created finding id to findingId.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) { pm.collectionVariables.set('findingId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resolve or reopen finding",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/audits/assignments/{{assignmentId}}/findings/{{findingId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{auditorToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isResolved\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create or update audit report",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/audits/assignments/{{assignmentId}}/report",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{auditorToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reportNumber\": \"AUD-POSTMAN-0001\",\n  \"reportUrl\": \"https://example.com/reports/audit-0001.pdf\",\n  \"remarks\": \"Draft audit report pending final review.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "description": "Document POST adds metadata only; it does not upload file contents."
+    },
+    {
+      "name": "Payments",
+      "item": [
+        {
+          "name": "List payments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/payments",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{customerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create pending payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/payments",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{customerToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"taxReturnId\": \"{{taxReturnId}}\",\n  \"amount\": 5000,\n  \"method\": \"UPI\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "description": "Creates a PENDING payment record only. No payment gateway is connected. Saves id to paymentId.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) { pm.collectionVariables.set('paymentId', pm.response.json().payment.id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update payment status (admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/payments/{{paymentId}}/status",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"PAID\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "description": "ADMIN only; permitted values: PAID, FAILED, REFUNDED."
+        }
+      ]
+    },
+    {
+      "name": "Administration",
+      "item": [
+        {
+          "name": "Get dashboard",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/admin/dashboard",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List financial years",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/admin/financial-years",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "description": "Stores the first returned financial-year id in financialYearId.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const rows = pm.response.json(); if (pm.response.code === 200 && rows.length) { pm.collectionVariables.set('financialYearId', rows[0].id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create financial year",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/financial-years",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"financialYear\": \"2027-28\",\n  \"assessmentYear\": \"2028-29\",\n  \"startDate\": \"2027-04-01T00:00:00.000Z\",\n  \"endDate\": \"2028-03-31T23:59:59.999Z\",\n  \"filingDueDate\": \"2028-07-31T23:59:59.999Z\",\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "description": "Financial year and assessment year must be unique; endDate must be after startDate."
+        },
+        {
+          "name": "Update financial year",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/financial-years/{{financialYearId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "description": "Provide one or more financial-year fields to update. Date values use ISO 8601 date-time format."
+        }
+      ],
+      "description": "All requests in this folder require an ADMIN token."
+    },
+    {
+      "name": "API Documentation",
+      "item": [
+        {
+          "name": "Swagger UI",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiServerUrl}}/docs",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "OpenAPI JSON",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiServerUrl}}/openapi.json",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

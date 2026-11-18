@@ -1,0 +1,20 @@
+services:
+  tax-filing-db:
+    image: postgres:16-alpine
+    container_name: tax-filing-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tax_filing
+    ports:
+      - "5434:5432"
+    volumes:
+      - tax_filing_pg:/var/lib/postgresql/data
+  redis:
+    image: redis:7-alpine
+    container_name: tax-filing-redis
+    ports:
+      - "6380:6379"
+volumes:
+  tax_filing_pg:
