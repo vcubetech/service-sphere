@@ -1,0 +1,132 @@
+openapi: 3.0.3
+info:
+  title: AI Watchman API
+  version: 1.0.0
+  description: Property boundary registration, Sentinel-2 monitoring, land-change records, alerts and reports.
+servers:
+  - url: http://localhost:4001/api
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      security: []
+      summary: Health check
+      responses: { '200': { description: API is healthy } }
+  /auth/register:
+    post:
+      security: []
+      summary: Register account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+      responses: { '201': { description: Account created }, '409': { description: Email exists } }
+  /auth/login:
+    post:
+      security: []
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses: { '200': { description: JWT token returned } }
+  /properties:
+    get: { summary: List current user's properties, responses: { '200': { description: Property list } } }
+    post:
+      summary: Register property
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                address: { type: string }
+                areaHectares: { type: number }
+                boundary:
+                  type: object
+                  description: GeoJSON Polygon geometry
+      responses: { '201': { description: Property created } }
+  /properties/{id}:
+    parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+    get: { summary: Get property, responses: { '200': { description: Property details } } }
+    patch: { summary: Update property, responses: { '200': { description: Updated property } } }
+    delete: { summary: Delete property, responses: { '204': { description: Deleted } } }
+  /monitoring/properties/{propertyId}/jobs:
+    post:
+      summary: Queue property monitoring job
+      parameters: [{ in: path, name: propertyId, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [startDate, endDate]
+              properties:
+                startDate: { type: string, format: date-time }
+                endDate: { type: string, format: date-time }
+                cloudMaxPercent: { type: number, minimum: 0, maximum: 100, default: 20 }
+      responses: { '202': { description: Job queued } }
+  /monitoring/jobs:
+    get: { summary: List monitoring jobs, responses: { '200': { description: Job list } } }
+  /monitoring/jobs/{id}:
+    get: { summary: Get monitoring job, responses: { '200': { description: Job details } } }
+  /changes:
+    get: { summary: List land-change records, responses: { '200': { description: Change records } } }
+    post: { summary: Create land-change record, responses: { '201': { description: Created } } }
+  /changes/{id}:
+    parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+    get: { summary: Get land-change record, responses: { '200': { description: Change record } } }
+  /alerts:
+    get: { summary: List alerts, responses: { '200': { description: Alerts } } }
+    post: { summary: Create alert, responses: { '201': { description: Created } } }
+  /alerts/{id}/status:
+    patch: { summary: Acknowledge or resolve alert, responses: { '200': { description: Updated alert } } }
+  /reports/properties/{propertyId}/generate:
+    post: { summary: Generate property monitoring report, responses: { '201': { description: Report and included records } } }
+  /reports:
+    get: { summary: List reports, responses: { '200': { description: Reports } } }
+  /reports/{id}:
+    get: { summary: Get report, responses: { '200': { description: Report } } }
+  /satellite/properties/{propertyId}/sentinel-2:
+    get:
+      summary: Search Sentinel-2 images for property boundary
+      parameters:
+        - { in: path, name: propertyId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: startDate, required: true, schema: { type: string, format: date } }
+        - { in: query, name: endDate, required: true, schema: { type: string, format: date } }
+        - { in: query, name: cloudMaxPercent, schema: { type: number, default: 20 } }
+      responses: { '200': { description: Matching satellite scenes } }
+  /satellite/properties/{propertyId}/ndvi-thumbnail:
+    get: { summary: Create NDVI thumbnail URL, responses: { '200': { description: Thumbnail URL } } }
+  /satellite/properties/{propertyId}/compare-ndvi:
+    post: { summary: Compare NDVI between two date ranges, responses: { '200': { description: NDVI change result } } }

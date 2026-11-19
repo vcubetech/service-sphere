@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: watchman-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ai_watchman
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports: ["15432:5432"]
+    volumes: ["watchman_pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_watchman"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    container_name: watchman-redis
+    restart: unless-stopped
+    ports: ["6379:6379"]
+    volumes: ["watchman_redisdata:/data"]
+    command: ["redis-server", "--appendonly", "yes"]
+  api:
+    build: .
+    container_name: watchman-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ai_watchman?schema=public
+      REDIS_URL: redis://redis:6379
+    ports: ["4001:4001"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+    command: sh -c "npx prisma migrate deploy && npm start"
+  worker:
+    build: .
+    container_name: watchman-worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ai_watchman?schema=public
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+    command: npm run worker
+volumes:
+  watchman_pgdata:
+  watchman_redisdata:
