@@ -1,9 +1,8 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { prisma } from '../../config/prisma';
-import { authenticate, getJwtSecret } from '../../middleware/auth';
+import { authenticate, signAccessToken } from '../../middleware/auth';
 import { asyncHandler } from '../../middleware/asyncHandler';
 
 const router = Router();
@@ -105,17 +104,8 @@ router.post(
       return;
     }
 
-    const token = jwt.sign(
-      { id: user.id, role: user.role, email: user.email },
-      getJwtSecret(),
-      {
-        expiresIn: (process.env.JWT_EXPIRES_IN ||
-          '1d') as jwt.SignOptions['expiresIn'],
-      },
-    );
-
     res.json({
-      token,
+      token: signAccessToken(user),
       user: {
         id: user.id,
         name: user.name,

@@ -75,7 +75,7 @@ router.patch(
   asyncHandler(async (req, res) => {
     const { status } = statusSchema.parse(req.body);
     const auditor = await prisma.auditor.update({
-      where: { id: String(req.params.id) },
+      where: { id: req.params.id },
       data: { status },
     });
     res.json(auditor);

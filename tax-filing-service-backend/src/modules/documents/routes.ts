@@ -97,7 +97,7 @@ router.patch(
   asyncHandler(async (req, res) => {
     const input = reviewSchema.parse(req.body);
     const document = await prisma.document.findUnique({
-      where: { id: String(req.params.id) },
+      where: { id: req.params.id },
       select: { id: true, taxReturn: { select: assignedAuditorUserId } },
     });
     if (!document) {

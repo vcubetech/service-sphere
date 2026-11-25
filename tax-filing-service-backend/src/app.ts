@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
 
+import { env } from './config/env';
 import admin from './modules/admin/routes';
 import auditors from './modules/auditors/routes';
 import audits from './modules/audits/routes';
@@ -18,36 +19,41 @@ import { notFound, errorHandler } from './middleware/errors';
 
 const app = express();
 
+app.disable('x-powered-by');
 app.use(helmet());
-app.use(
-  cors({
-    origin: process.env.CORS_ORIGIN?.split(',') || '*',
-  }),
-);
+app.use(cors({ origin: env.CORS_ORIGIN }));
 app.use(express.json({ limit: '1mb' }));
-app.use(morgan('dev'));
+if (env.NODE_ENV !== 'test') {
+  app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+}
 app.use(
   '/api',
   rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 300,
+    limit: 300,
   }),
 );
 
-const healthCheck = (_req: express.Request, res: express.Response) =>
+app.get(['/health', '/api/health'], (_req, res) => {
   res.json({ status: 'ok', service: 'tax-filing-api' });
-
-app.get(['/health', '/api/health'], healthCheck);
+});
 app.get('/openapi.json', (_req, res) => res.json(openapi));
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapi));
-app.use('/api/auth', auth);
-app.use('/api/customers', customers);
-app.use('/api/auditors', auditors);
-app.use('/api/tax-returns', taxReturns);
-app.use('/api/documents', documents);
-app.use('/api/audits', audits);
-app.use('/api/payments', payments);
-app.use('/api/admin', admin);
+
+const routes = {
+  '/api/auth': auth,
+  '/api/customers': customers,
+  '/api/auditors': auditors,
+  '/api/tax-returns': taxReturns,
+  '/api/documents': documents,
+  '/api/audits': audits,
+  '/api/payments': payments,
+  '/api/admin': admin,
+};
+for (const [path, router] of Object.entries(routes)) {
+  app.use(path, router);
+}
+
 app.use(notFound);
 app.use(errorHandler);
 

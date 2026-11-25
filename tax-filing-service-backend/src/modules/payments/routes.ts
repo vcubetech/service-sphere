@@ -78,7 +78,7 @@ router.patch(
   asyncHandler(async (req, res) => {
     const { status } = paymentStatusSchema.parse(req.body);
     const payment = await prisma.payment.update({
-      where: { id: String(req.params.id) },
+      where: { id: req.params.id },
       data: { status },
     });
     res.json(payment);

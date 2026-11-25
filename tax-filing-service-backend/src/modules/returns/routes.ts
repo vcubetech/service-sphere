@@ -219,7 +219,7 @@ router.get(
   '/:id',
   asyncHandler(async (req, res) => {
     const taxReturn = await prisma.taxReturn.findFirst({
-      where: { id: String(req.params.id), ...taxReturnScope(req.user!) },
+      where: { id: req.params.id, ...taxReturnScope(req.user!) },
       include: {
         financialYear: true,
         incomeDetails: true,
@@ -250,7 +250,7 @@ router.patch(
     const input = updateReturnSchema.parse(req.body);
     const editable = await requireEditableReturn(
       req.user!.id,
-      String(req.params.id),
+      req.params.id,
     );
 
     const taxReturn = await prisma.taxReturn.update({
@@ -267,7 +267,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const editable = await requireEditableReturn(
       req.user!.id,
-      String(req.params.id),
+      req.params.id,
       'Submittable tax return not found',
     );
 
@@ -297,7 +297,7 @@ router.patch(
   asyncHandler(async (req, res) => {
     const input = statusUpdateSchema.parse(req.body);
     const taxReturn = await prisma.taxReturn.findUnique({
-      where: { id: String(req.params.id) },
+      where: { id: req.params.id },
       select: { id: true, status: true },
     });
     if (!taxReturn) {
@@ -344,7 +344,7 @@ router.put(
   asyncHandler(async (req, res) => {
     const input = computationSchema.parse(req.body);
     const taxReturn = await prisma.taxReturn.findUnique({
-      where: { id: String(req.params.id) },
+      where: { id: req.params.id },
       select: { id: true, ...assignedAuditorUserId },
     });
     if (!taxReturn) {
@@ -386,7 +386,7 @@ router.post(
     const input = incomeSchema.parse(req.body);
     const editable = await requireEditableReturn(
       req.user!.id,
-      String(req.params.id),
+      req.params.id,
     );
 
     const income = await prisma.$transaction(async (transaction) => {
@@ -407,7 +407,7 @@ router.post(
     const input = deductionSchema.parse(req.body);
     const editable = await requireEditableReturn(
       req.user!.id,
-      String(req.params.id),
+      req.params.id,
     );
 
     const deduction = await prisma.$transaction(async (transaction) => {

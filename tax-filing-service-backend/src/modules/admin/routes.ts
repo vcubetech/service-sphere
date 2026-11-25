@@ -103,7 +103,7 @@ router.patch(
   asyncHandler(async (req, res) => {
     const input = updateYearSchema.parse(req.body);
     const existing = await prisma.financialYear.findUnique({
-      where: { id: String(req.params.id) },
+      where: { id: req.params.id },
       select: { id: true, startDate: true, endDate: true },
     });
     if (!existing) {

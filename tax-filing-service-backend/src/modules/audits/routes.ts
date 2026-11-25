@@ -186,7 +186,7 @@ router.patch(
     const { status } = assignmentStatusSchema.parse(req.body);
     const assignment = await requireAccessibleAssignment(
       req.user!,
-      String(req.params.id),
+      req.params.id,
     );
 
     const now = new Date();
@@ -234,7 +234,7 @@ router.post(
     const input = findingSchema.parse(req.body);
     const assignment = await requireAccessibleAssignment(
       req.user!,
-      String(req.params.id),
+      req.params.id,
     );
 
     const finding = await prisma.auditFinding.create({
@@ -250,8 +250,8 @@ router.patch(
     const { isResolved } = z.object({ isResolved: z.boolean() }).parse(req.body);
     const finding = await prisma.auditFinding.findFirst({
       where: {
-        id: String(req.params.findingId),
-        assignmentId: String(req.params.id),
+        id: req.params.findingId,
+        assignmentId: req.params.id,
       },
       select: {
         id: true,
@@ -281,7 +281,7 @@ router.put(
     const input = reportSchema.parse(req.body);
     const assignment = await requireAccessibleAssignment(
       req.user!,
-      String(req.params.id),
+      req.params.id,
     );
 
     const issuedAt = new Date();
