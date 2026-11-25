@@ -61,6 +61,8 @@ model Property {
   ownerId     String   @db.Uuid
   owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   name        String
+  /// Land-record survey number; required by the API, nullable for properties created before it existed.
+  surveyNumber String?
   description String?
   areaHectares Float?
   boundary    Json?
@@ -75,6 +77,7 @@ model Property {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   @@index([ownerId])
+  @@unique([ownerId, surveyNumber])
 }
 
 model MonitoringJob {

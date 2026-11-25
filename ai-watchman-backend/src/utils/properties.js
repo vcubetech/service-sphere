@@ -17,23 +17,3 @@ export async function findOwnedBoundary(id, userId, message = 'Property boundary
   if (!property.boundary) throw HttpError.badRequest(message);
   return property;
 }
-
-/**
- * Average of a polygon's outer-ring vertices as `{ centroidLat, centroidLng }`.
- * GeoJSON rings repeat the first position at the end, so that closing
- * position is skipped to avoid weighting the first vertex twice.
- */
-export function polygonCentroid(polygon) {
-  const ring = polygon.coordinates[0];
-  const [firstLng, firstLat] = ring[0];
-  const [lastLng, lastLat] = ring[ring.length - 1];
-  const vertices = firstLng === lastLng && firstLat === lastLat ? ring.slice(0, -1) : ring;
-
-  let lngSum = 0;
-  let latSum = 0;
-  for (const [lng, lat] of vertices) {
-    lngSum += lng;
-    latSum += lat;
-  }
-  return { centroidLat: latSum / vertices.length, centroidLng: lngSum / vertices.length };
-}

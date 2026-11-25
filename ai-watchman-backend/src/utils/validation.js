@@ -3,12 +3,6 @@ import { HttpError } from './httpError.js';
 
 export const uuidParam = z.uuid();
 
-/** GeoJSON Polygon: each ring needs at least 4 [lng, lat] positions. */
-export const geoJsonPolygon = z.object({
-  type: z.literal('Polygon'),
-  coordinates: z.array(z.array(z.tuple([z.number(), z.number()])).min(4)),
-});
-
 /** A date string Earth Engine and `new Date()` can both parse, kept as a string. */
 export const dateString = z.string().refine((value) => !Number.isNaN(Date.parse(value)), 'must be a valid date');
 

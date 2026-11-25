@@ -102,7 +102,7 @@ Use the returned token on protected routes:
 Authorization: Bearer YOUR_JWT_TOKEN
 ```
 
-Register property (boundary is a GeoJSON Polygon; coordinates use `[longitude, latitude]`):
+Register property (`surveyNumber` is required and must be unique among your properties):
 ```http
 POST /api/properties
 Authorization: Bearer YOUR_JWT_TOKEN
@@ -110,14 +110,13 @@ Content-Type: application/json
 
 {
   "name": "Farm Plot A",
+  "surveyNumber": "123/4A",
   "address": "Coimbatore, Tamil Nadu, India",
-  "areaHectares": 2.4,
-  "boundary": {
-    "type": "Polygon",
-    "coordinates": [[[76.95,11.01],[76.951,11.01],[76.951,11.011],[76.95,11.011],[76.95,11.01]]]
-  }
+  "areaHectares": 2.4
 }
 ```
+
+> The property API no longer accepts or returns a `boundary`. Monitoring jobs and satellite endpoints still need a boundary, so they return `400` for properties that don't have one.
 
 Queue a monitoring job:
 ```http
@@ -145,7 +144,7 @@ Check status at `GET /api/monitoring/jobs` or `GET /api/monitoring/jobs/JOB_UUID
 - Google Earth Engine requires separate project, service-account and access setup. Without those credentials, satellite calls return a configuration error; other API modules can still be developed.
 - Monitoring jobs use BullMQ and are processed by `npm run worker`.
 - The worker currently searches Sentinel-2 scenes and records the result. Add a validated change-detection pipeline (e.g. image normalization, cloud masking, co-registration, classification/change metrics) before generating automatic land-change records or high-confidence alerts.
-- GeoJSON boundaries are persisted in a Prisma `Json` field. The PostGIS container is ready, but this starter's CRUD does not yet write native PostGIS geometry columns.
+- The `Property.boundary` column (GeoJSON `Json`) is kept for existing data and is still read by monitoring and satellite features, but the property API no longer sets or returns it. The PostGIS container is ready, but no native PostGIS geometry columns are written yet.
 - Report generation creates a structured database report with counts and summary; PDF export can be added as a next step.
 
 ## Troubleshooting
