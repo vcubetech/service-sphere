@@ -3,15 +3,19 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { prisma } from '../../config/prisma';
-import { authenticate } from '../../middleware/auth';
+import { authenticate, getJwtSecret } from '../../middleware/auth';
 import { asyncHandler } from '../../middleware/asyncHandler';
 
 const router = Router();
 
+const BCRYPT_ROUNDS = 12;
+
+const email = z.string().trim().email().transform((value) => value.toLowerCase());
+
 const registerSchema = z
   .object({
     name: z.string().trim().min(2).max(100),
-    email: z.string().trim().email().transform((email) => email.toLowerCase()),
+    email,
     phone: z.string().trim().min(7).max(20).optional(),
     password: z.string().min(8).max(128),
     role: z.enum(['CUSTOMER', 'AUDITOR']).default('CUSTOMER'),
@@ -37,57 +41,47 @@ const registerSchema = z
     }
   });
 
+const loginSchema = z.object({
+  email,
+  password: z.string().min(1),
+});
+
 router.post(
   '/register',
   asyncHandler(async (req, res) => {
-    const input = registerSchema.parse(req.body);
-    const passwordHash = await bcrypt.hash(input.password, 12);
+    const { name, email, phone, password, role, panNumber, ...auditorProfile } =
+      registerSchema.parse(req.body);
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
-    const result = await prisma.$transaction(async (transaction) => {
-      const user = await transaction.user.create({
-        data: {
-          name: input.name,
-          email: input.email,
-          phone: input.phone,
-          passwordHash,
-          role: input.role,
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          phone: true,
-          role: true,
-          createdAt: true,
-        },
-      });
-
-      const profile =
-        input.role === 'CUSTOMER'
-          ? await transaction.customer.create({
-              data: {
-                userId: user.id,
-                panNumber: input.panNumber!,
-              },
-            })
-          : await transaction.auditor.create({
-              data: {
-                userId: user.id,
-                membershipNumber: input.membershipNumber,
-                firmName: input.firmName,
-                qualification: input.qualification,
-                experienceYears: input.experienceYears,
-                city: input.city,
-              },
-            });
-
-      return { user, profile };
+    // The user and its role profile are created together in one nested write.
+    const { customer, auditor, ...user } = await prisma.user.create({
+      data: {
+        name,
+        email,
+        phone,
+        passwordHash,
+        role,
+        ...(role === 'CUSTOMER'
+          ? { customer: { create: { panNumber: panNumber! } } }
+          : { auditor: { create: auditorProfile } }),
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        role: true,
+        createdAt: true,
+        customer: true,
+        auditor: true,
+      },
     });
 
     res.status(201).json({
-      ...result,
+      user,
+      profile: customer ?? auditor,
       message:
-        input.role === 'AUDITOR'
+        role === 'AUDITOR'
           ? 'Registration successful. Auditor verification is pending.'
           : 'Registration successful.',
     });
@@ -97,12 +91,7 @@ router.post(
 router.post(
   '/login',
   asyncHandler(async (req, res) => {
-    const input = z
-      .object({
-        email: z.string().trim().email().transform((email) => email.toLowerCase()),
-        password: z.string().min(1),
-      })
-      .parse(req.body);
+    const input = loginSchema.parse(req.body);
 
     const user = await prisma.user.findUnique({
       where: { email: input.email },
@@ -116,13 +105,9 @@ router.post(
       return;
     }
 
-    const secret = process.env.JWT_SECRET;
-    if (!secret) {
-      throw new Error('JWT_SECRET is not configured');
-    }
     const token = jwt.sign(
       { id: user.id, role: user.role, email: user.email },
-      secret,
+      getJwtSecret(),
       {
         expiresIn: (process.env.JWT_EXPIRES_IN ||
           '1d') as jwt.SignOptions['expiresIn'],

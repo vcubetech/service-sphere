@@ -1,16 +1,117 @@
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
-import { Prisma } from '@prisma/client';
+import {
+  FilingType,
+  IncomeType,
+  ITRForm,
+  Prisma,
+  TaxRegime,
+  TaxReturnStatus,
+} from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../../config/prisma';
+import { HttpError } from '../../lib/httpError';
+import {
+  assertAssignedAuditor,
+  assignedAuditorUserId,
+  requireCustomerId,
+} from '../../lib/profiles';
+import { userSummary } from '../../lib/selects';
 import { asyncHandler } from '../../middleware/asyncHandler';
 import { authenticate, authorize } from '../../middleware/auth';
-import { editableCustomerReturn, visibleReturnWhere } from './access';
+import { findEditableCustomerReturn, taxReturnScope } from './access';
 
 const router = Router();
 
 router.use(authenticate);
 
+// ---------------------------------------------------------------- schemas
+
+const amount = z.number().nonnegative();
+
+const createReturnSchema = z.object({
+  financialYearId: z.string().min(1),
+  itrForm: z.nativeEnum(ITRForm).optional(),
+  filingType: z.nativeEnum(FilingType).optional(),
+  taxRegime: z.nativeEnum(TaxRegime).optional(),
+});
+
+const updateReturnSchema = z
+  .object({
+    itrForm: z.nativeEnum(ITRForm).nullable().optional(),
+    filingType: z.nativeEnum(FilingType).optional(),
+    taxRegime: z.nativeEnum(TaxRegime).optional(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: 'Provide at least one field to update',
+  });
+
+const paginationSchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+/** Admin-driven transitions and the statuses each may start from. */
+const ADMIN_TRANSITIONS = {
+  READY_TO_FILE: ['APPROVED'],
+  FILED: ['READY_TO_FILE'],
+  VERIFIED: ['FILED'],
+  COMPLETED: ['VERIFIED'],
+  REJECTED: ['UNDER_REVIEW', 'QUERY_RAISED', 'APPROVED'],
+} as const satisfies Partial<Record<TaxReturnStatus, readonly TaxReturnStatus[]>>;
+
+type AdminTargetStatus = keyof typeof ADMIN_TRANSITIONS;
+
+const statusUpdateSchema = z.object({
+  status: z.enum(
+    Object.keys(ADMIN_TRANSITIONS) as [AdminTargetStatus, ...AdminTargetStatus[]],
+  ),
+  acknowledgementNumber: z.string().trim().min(1).max(100).optional(),
+  remarks: z.string().trim().max(1000).optional(),
+});
+
+const computationSchema = z.object({
+  grossTotalIncome: amount,
+  exemptIncome: amount,
+  deductions: amount,
+  taxableIncome: amount,
+  basicTax: amount,
+  surcharge: amount,
+  cess: amount,
+  rebate: amount,
+  tds: amount,
+  advanceTax: amount,
+  selfAssessmentTax: amount,
+  finalTax: amount,
+});
+
+const incomeSchema = z.object({
+  incomeType: z.nativeEnum(IncomeType),
+  description: z.string().trim().max(500).optional(),
+  employerName: z.string().trim().max(200).optional(),
+  grossAmount: amount,
+  taxableAmount: amount,
+  tdsAmount: amount.default(0),
+});
+
+const deductionSchema = z
+  .object({
+    section: z.string().trim().min(1).max(30),
+    description: z.string().trim().max(500).optional(),
+    amount,
+    eligibleAmount: amount,
+  })
+  .refine((value) => value.eligibleAmount <= value.amount, {
+    path: ['eligibleAmount'],
+    message: 'Eligible amount cannot exceed the claimed amount',
+  });
+
+// ---------------------------------------------------------------- helpers
+
+const ZERO = new Prisma.Decimal(0);
+
+/** Recomputes a return's income/deduction totals from its line items. */
 async function refreshReturnTotals(
   transaction: Prisma.TransactionClient,
   taxReturnId: string,
@@ -18,32 +119,44 @@ async function refreshReturnTotals(
   const [income, deductions] = await Promise.all([
     transaction.incomeDetail.aggregate({
       where: { taxReturnId },
-      _sum: {
-        grossAmount: true,
-        taxableAmount: true,
-      },
+      _sum: { grossAmount: true, taxableAmount: true },
     }),
     transaction.deduction.aggregate({
       where: { taxReturnId },
       _sum: { eligibleAmount: true },
     }),
   ]);
-  const totalIncome = income._sum.grossAmount ?? new Prisma.Decimal(0);
-  const totalDeductions =
-    deductions._sum.eligibleAmount ?? new Prisma.Decimal(0);
-  const taxableIncome = income._sum.taxableAmount ?? new Prisma.Decimal(0);
+  const totalIncome = income._sum.grossAmount ?? ZERO;
+  const totalDeductions = deductions._sum.eligibleAmount ?? ZERO;
+  const taxableBeforeDeductions = income._sum.taxableAmount ?? ZERO;
 
   await transaction.taxReturn.update({
     where: { id: taxReturnId },
     data: {
       totalIncome,
       totalDeductions,
-      taxableIncome: taxableIncome.greaterThan(totalDeductions)
-        ? taxableIncome.minus(totalDeductions)
-        : new Prisma.Decimal(0),
+      taxableIncome: Prisma.Decimal.max(
+        taxableBeforeDeductions.minus(totalDeductions),
+        ZERO,
+      ),
     },
   });
 }
+
+/** Loads the caller's editable return or throws 404 with the given message. */
+async function requireEditableReturn(
+  userId: string,
+  returnId: string,
+  message = 'Editable tax return not found',
+) {
+  const taxReturn = await findEditableCustomerReturn(userId, returnId);
+  if (!taxReturn) {
+    throw HttpError.notFound(message);
+  }
+  return taxReturn;
+}
+
+// ---------------------------------------------------------------- routes
 
 router.get(
   '/financial-years',
@@ -60,47 +173,23 @@ router.post(
   '/',
   authorize('CUSTOMER'),
   asyncHandler(async (req, res) => {
-    const input = z
-      .object({
-        financialYearId: z.string().min(1),
-        itrForm: z
-          .enum(['ITR_1', 'ITR_2', 'ITR_3', 'ITR_4', 'ITR_5', 'ITR_6', 'ITR_7'])
-          .optional(),
-        filingType: z.enum(['ORIGINAL', 'REVISED', 'BELATED', 'UPDATED']).optional(),
-        taxRegime: z.enum(['OLD_REGIME', 'NEW_REGIME']).optional(),
-      })
-      .parse(req.body);
+    const input = createReturnSchema.parse(req.body);
+    const customerId = await requireCustomerId(req.user!.id);
 
-    const customer = await prisma.customer.findUnique({
-      where: { userId: req.user!.id },
-      select: { id: true },
-    });
-    if (!customer) {
-      res.status(404).json({ message: 'Customer profile not found' });
-      return;
-    }
-
-    const taxReturn = await prisma.$transaction(async (transaction) => {
-      const created = await transaction.taxReturn.create({
-        data: {
-          returnNumber: `ITR-${Date.now()}-${randomUUID().slice(0, 8)}`,
-          customerId: customer.id,
-          financialYearId: input.financialYearId,
-          itrForm: input.itrForm,
-          filingType: input.filingType,
-          taxRegime: input.taxRegime,
+    const taxReturn = await prisma.taxReturn.create({
+      data: {
+        ...input,
+        returnNumber: `ITR-${Date.now()}-${randomUUID().slice(0, 8)}`,
+        customerId,
+        filingHistories: {
+          create: {
+            currentStatus: 'DRAFT',
+            changedBy: req.user!.id,
+            remarks: 'Tax return created',
+          },
         },
-        include: { financialYear: true },
-      });
-      await transaction.filingHistory.create({
-        data: {
-          taxReturnId: created.id,
-          currentStatus: 'DRAFT',
-          changedBy: req.user!.id,
-          remarks: 'Tax return created',
-        },
-      });
-      return created;
+      },
+      include: { financialYear: true },
     });
     res.status(201).json(taxReturn);
   }),
@@ -109,37 +198,10 @@ router.post(
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const { page, limit } = z
-      .object({
-        page: z.coerce.number().int().min(1).default(1),
-        limit: z.coerce.number().int().min(1).max(100).default(20),
-      })
-      .parse(req.query);
+    const { page, limit } = paginationSchema.parse(req.query);
+    const where = taxReturnScope(req.user!);
 
-    let where: { customerId?: string; auditorId?: string } = {};
-    if (req.user!.role === 'CUSTOMER') {
-      const customer = await prisma.customer.findUnique({
-        where: { userId: req.user!.id },
-        select: { id: true },
-      });
-      if (!customer) {
-        res.status(404).json({ message: 'Customer profile not found' });
-        return;
-      }
-      where = { customerId: customer.id };
-    } else if (req.user!.role === 'AUDITOR') {
-      const auditor = await prisma.auditor.findUnique({
-        where: { userId: req.user!.id },
-        select: { id: true },
-      });
-      if (!auditor) {
-        res.status(404).json({ message: 'Auditor profile not found' });
-        return;
-      }
-      where = { auditorId: auditor.id };
-    }
-
-    const [taxReturns, total] = await prisma.$transaction([
+    const [taxReturns, total] = await Promise.all([
       prisma.taxReturn.findMany({
         where,
         include: { financialYear: true },
@@ -156,18 +218,8 @@ router.get(
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const where = await visibleReturnWhere(
-      req.user!.id,
-      req.user!.role,
-      String(req.params.id),
-    );
-    if (!where) {
-      res.status(404).json({ message: 'Tax return not found' });
-      return;
-    }
-
     const taxReturn = await prisma.taxReturn.findFirst({
-      where,
+      where: { id: String(req.params.id), ...taxReturnScope(req.user!) },
       include: {
         financialYear: true,
         incomeDetails: true,
@@ -176,11 +228,7 @@ router.get(
         documents: true,
         auditAssignment: {
           include: {
-            auditor: {
-              include: {
-                user: { select: { id: true, name: true, email: true } },
-              },
-            },
+            auditor: { include: { user: { select: userSummary } } },
             findings: true,
             report: true,
           },
@@ -189,8 +237,7 @@ router.get(
       },
     });
     if (!taxReturn) {
-      res.status(404).json({ message: 'Tax return not found' });
-      return;
+      throw HttpError.notFound('Tax return not found');
     }
     res.json(taxReturn);
   }),
@@ -200,31 +247,14 @@ router.patch(
   '/:id',
   authorize('CUSTOMER'),
   asyncHandler(async (req, res) => {
-    const input = z
-      .object({
-        itrForm: z
-          .enum(['ITR_1', 'ITR_2', 'ITR_3', 'ITR_4', 'ITR_5', 'ITR_6', 'ITR_7'])
-          .nullable()
-          .optional(),
-        filingType: z.enum(['ORIGINAL', 'REVISED', 'BELATED', 'UPDATED']).optional(),
-        taxRegime: z.enum(['OLD_REGIME', 'NEW_REGIME']).optional(),
-      })
-      .strict()
-      .refine((value) => Object.keys(value).length > 0, {
-        message: 'Provide at least one field to update',
-      })
-      .parse(req.body);
-    const editable = await editableCustomerReturn(
+    const input = updateReturnSchema.parse(req.body);
+    const editable = await requireEditableReturn(
       req.user!.id,
       String(req.params.id),
     );
-    if (!editable) {
-      res.status(404).json({ message: 'Editable tax return not found' });
-      return;
-    }
 
     const taxReturn = await prisma.taxReturn.update({
-      where: { id: editable.taxReturn.id },
+      where: { id: editable.id },
       data: input,
     });
     res.json(taxReturn);
@@ -235,30 +265,27 @@ router.post(
   '/:id/submit',
   authorize('CUSTOMER'),
   asyncHandler(async (req, res) => {
-    const editable = await editableCustomerReturn(
+    const editable = await requireEditableReturn(
       req.user!.id,
       String(req.params.id),
+      'Submittable tax return not found',
     );
-    if (!editable) {
-      res.status(404).json({ message: 'Submittable tax return not found' });
-      return;
-    }
 
-    const taxReturn = await prisma.$transaction(async (transaction) => {
-      const updated = await transaction.taxReturn.update({
-        where: { id: editable.taxReturn.id },
-        data: { status: 'UNDER_REVIEW' },
-      });
-      await transaction.filingHistory.create({
-        data: {
-          taxReturnId: updated.id,
-          previousStatus: editable.taxReturn.status,
-          currentStatus: 'UNDER_REVIEW',
-          changedBy: req.user!.id,
-          remarks: 'Submitted by customer for review',
+    // Matching on the current status makes a concurrent double-submit fail
+    // with 404 instead of writing two history entries.
+    const taxReturn = await prisma.taxReturn.update({
+      where: { id: editable.id, status: editable.status },
+      data: {
+        status: 'UNDER_REVIEW',
+        filingHistories: {
+          create: {
+            previousStatus: editable.status,
+            currentStatus: 'UNDER_REVIEW',
+            changedBy: req.user!.id,
+            remarks: 'Submitted by customer for review',
+          },
         },
-      });
-      return updated;
+      },
     });
     res.json(taxReturn);
   }),
@@ -268,71 +295,44 @@ router.patch(
   '/:id/status',
   authorize('ADMIN'),
   asyncHandler(async (req, res) => {
-    const input = z
-      .object({
-        status: z.enum([
-          'READY_TO_FILE',
-          'FILED',
-          'VERIFIED',
-          'COMPLETED',
-          'REJECTED',
-        ]),
-        acknowledgementNumber: z.string().trim().min(1).max(100).optional(),
-        remarks: z.string().trim().max(1000).optional(),
-      })
-      .parse(req.body);
+    const input = statusUpdateSchema.parse(req.body);
     const taxReturn = await prisma.taxReturn.findUnique({
       where: { id: String(req.params.id) },
       select: { id: true, status: true },
     });
     if (!taxReturn) {
-      res.status(404).json({ message: 'Tax return not found' });
-      return;
+      throw HttpError.notFound('Tax return not found');
     }
 
-    const allowedPreviousStatuses: Record<string, string[]> = {
-      READY_TO_FILE: ['APPROVED'],
-      FILED: ['READY_TO_FILE'],
-      VERIFIED: ['FILED'],
-      COMPLETED: ['VERIFIED'],
-      REJECTED: ['UNDER_REVIEW', 'QUERY_RAISED', 'APPROVED'],
-    };
-    if (!allowedPreviousStatuses[input.status].includes(taxReturn.status)) {
-      res.status(409).json({
-        message: `Cannot change tax return from ${taxReturn.status} to ${input.status}`,
-      });
-      return;
+    const allowedFrom: readonly TaxReturnStatus[] = ADMIN_TRANSITIONS[input.status];
+    if (!allowedFrom.includes(taxReturn.status)) {
+      throw HttpError.conflict(
+        `Cannot change tax return from ${taxReturn.status} to ${input.status}`,
+      );
     }
-    if (
-      input.status === 'FILED' &&
-      !input.acknowledgementNumber
-    ) {
-      res.status(400).json({
-        message: 'acknowledgementNumber is required when marking a return filed',
-      });
-      return;
+    if (input.status === 'FILED' && !input.acknowledgementNumber) {
+      throw HttpError.badRequest(
+        'acknowledgementNumber is required when marking a return filed',
+      );
     }
 
-    const updated = await prisma.$transaction(async (transaction) => {
-      const result = await transaction.taxReturn.update({
-        where: { id: taxReturn.id },
-        data: {
-          status: input.status,
-          acknowledgementNumber: input.acknowledgementNumber,
-          filedAt: input.status === 'FILED' ? new Date() : undefined,
-          verifiedAt: input.status === 'VERIFIED' ? new Date() : undefined,
+    const now = new Date();
+    const updated = await prisma.taxReturn.update({
+      where: { id: taxReturn.id, status: taxReturn.status },
+      data: {
+        status: input.status,
+        acknowledgementNumber: input.acknowledgementNumber,
+        filedAt: input.status === 'FILED' ? now : undefined,
+        verifiedAt: input.status === 'VERIFIED' ? now : undefined,
+        filingHistories: {
+          create: {
+            previousStatus: taxReturn.status,
+            currentStatus: input.status,
+            changedBy: req.user!.id,
+            remarks: input.remarks,
+          },
         },
-      });
-      await transaction.filingHistory.create({
-        data: {
-          taxReturnId: taxReturn.id,
-          previousStatus: taxReturn.status,
-          currentStatus: input.status,
-          changedBy: req.user!.id,
-          remarks: input.remarks,
-        },
-      });
-      return result;
+      },
     });
     res.json(updated);
   }),
@@ -342,50 +342,27 @@ router.put(
   '/:id/computation',
   authorize('AUDITOR', 'ADMIN'),
   asyncHandler(async (req, res) => {
-    const amount = z.number().nonnegative();
-    const input = z
-      .object({
-        grossTotalIncome: amount,
-        exemptIncome: amount,
-        deductions: amount,
-        taxableIncome: amount,
-        basicTax: amount,
-        surcharge: amount,
-        cess: amount,
-        rebate: amount,
-        tds: amount,
-        advanceTax: amount,
-        selfAssessmentTax: amount,
-        finalTax: amount,
-      })
-      .parse(req.body);
+    const input = computationSchema.parse(req.body);
     const taxReturn = await prisma.taxReturn.findUnique({
       where: { id: String(req.params.id) },
-      select: { id: true, auditorId: true },
+      select: { id: true, ...assignedAuditorUserId },
     });
     if (!taxReturn) {
-      res.status(404).json({ message: 'Tax return not found' });
-      return;
+      throw HttpError.notFound('Tax return not found');
     }
+    assertAssignedAuditor(
+      req.user!,
+      taxReturn.auditor?.userId,
+      'Tax return is not assigned to you',
+    );
 
-    if (req.user!.role === 'AUDITOR') {
-      const auditor = await prisma.auditor.findUnique({
-        where: { userId: req.user!.id },
-        select: { id: true },
-      });
-      if (!auditor || taxReturn.auditorId !== auditor.id) {
-        res.status(403).json({ message: 'Tax return is not assigned to you' });
-        return;
-      }
-    }
-
-    const computation = await prisma.$transaction(async (transaction) => {
-      const result = await transaction.taxComputation.upsert({
+    const [computation] = await prisma.$transaction([
+      prisma.taxComputation.upsert({
         where: { taxReturnId: taxReturn.id },
         create: { taxReturnId: taxReturn.id, ...input },
         update: input,
-      });
-      await transaction.taxReturn.update({
+      }),
+      prisma.taxReturn.update({
         where: { id: taxReturn.id },
         data: {
           totalIncome: input.grossTotalIncome,
@@ -396,9 +373,8 @@ router.put(
             .plus(input.advanceTax)
             .plus(input.selfAssessmentTax),
         },
-      });
-      return result;
-    });
+      }),
+    ]);
     res.json(computation);
   }),
 );
@@ -407,30 +383,17 @@ router.post(
   '/:id/income',
   authorize('CUSTOMER'),
   asyncHandler(async (req, res) => {
-    const input = z
-      .object({
-        incomeType: z
-          .enum(['SALARY', 'HOUSE_PROPERTY', 'BUSINESS', 'CAPITAL_GAINS', 'OTHER_SOURCES']),
-        description: z.string().trim().max(500).optional(),
-        employerName: z.string().trim().max(200).optional(),
-        grossAmount: z.number().nonnegative(),
-        taxableAmount: z.number().nonnegative(),
-        tdsAmount: z.number().nonnegative().default(0),
-      })
-      .parse(req.body);
-    const editable = await editableCustomerReturn(
+    const input = incomeSchema.parse(req.body);
+    const editable = await requireEditableReturn(
       req.user!.id,
       String(req.params.id),
     );
-    if (!editable) {
-      res.status(404).json({ message: 'Editable tax return not found' });
-      return;
-    }
+
     const income = await prisma.$transaction(async (transaction) => {
       const created = await transaction.incomeDetail.create({
-        data: { ...input, taxReturnId: editable.taxReturn.id },
+        data: { ...input, taxReturnId: editable.id },
       });
-      await refreshReturnTotals(transaction, editable.taxReturn.id);
+      await refreshReturnTotals(transaction, editable.id);
       return created;
     });
     res.status(201).json(income);
@@ -441,31 +404,17 @@ router.post(
   '/:id/deductions',
   authorize('CUSTOMER'),
   asyncHandler(async (req, res) => {
-    const input = z
-      .object({
-        section: z.string().trim().min(1).max(30),
-        description: z.string().trim().max(500).optional(),
-        amount: z.number().nonnegative(),
-        eligibleAmount: z.number().nonnegative(),
-      })
-      .refine((value) => value.eligibleAmount <= value.amount, {
-        path: ['eligibleAmount'],
-        message: 'Eligible amount cannot exceed the claimed amount',
-      })
-      .parse(req.body);
-    const editable = await editableCustomerReturn(
+    const input = deductionSchema.parse(req.body);
+    const editable = await requireEditableReturn(
       req.user!.id,
       String(req.params.id),
     );
-    if (!editable) {
-      res.status(404).json({ message: 'Editable tax return not found' });
-      return;
-    }
+
     const deduction = await prisma.$transaction(async (transaction) => {
       const created = await transaction.deduction.create({
-        data: { ...input, taxReturnId: editable.taxReturn.id },
+        data: { ...input, taxReturnId: editable.id },
       });
-      await refreshReturnTotals(transaction, editable.taxReturn.id);
+      await refreshReturnTotals(transaction, editable.id);
       return created;
     });
     res.status(201).json(deduction);

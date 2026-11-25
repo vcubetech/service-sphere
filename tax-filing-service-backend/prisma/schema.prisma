@@ -379,6 +379,9 @@ model AuditAssignment {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Auditor's assignment list: filter by auditor, newest first.
+  @@index([auditorId, assignedAt])
 }
 
 // ---------------- AUDIT FINDINGS ----------------
@@ -456,4 +459,6 @@ model Payment {
   updatedAt DateTime @updatedAt
 
   @@index([taxReturnId, status])
+  // Customer/auditor payment history: filter by user, newest first.
+  @@index([userId, createdAt])
 }

@@ -1,27 +1,44 @@
 import { Router } from 'express';
+import { AuditorStatus } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../../config/prisma';
-import { authenticate, authorize } from '../../middleware/auth';
+import { HttpError } from '../../lib/httpError';
+import { userContact } from '../../lib/selects';
 import { asyncHandler } from '../../middleware/asyncHandler';
+import { authenticate, authorize } from '../../middleware/auth';
 
 const router = Router();
 
+router.use(authenticate);
+
+const optionalText = (max: number) =>
+  z.string().trim().min(1).max(max).nullable().optional();
+
+const updateProfileSchema = z
+  .object({
+    membershipNumber: optionalText(100),
+    firmName: optionalText(200),
+    qualification: optionalText(200),
+    experienceYears: z.number().int().min(0).max(80).optional(),
+    city: optionalText(100),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: 'Provide at least one profile field to update',
+  });
+
+const statusSchema = z.object({ status: z.nativeEnum(AuditorStatus) });
+
 router.get(
   '/me',
-  authenticate,
   authorize('AUDITOR'),
   asyncHandler(async (req, res) => {
     const auditor = await prisma.auditor.findUnique({
       where: { userId: req.user!.id },
-      include: {
-        user: {
-          select: { id: true, name: true, email: true, phone: true },
-        },
-      },
+      include: { user: { select: userContact } },
     });
     if (!auditor) {
-      res.status(404).json({ message: 'Auditor profile not found' });
-      return;
+      throw HttpError.notFound('Auditor profile not found');
     }
     res.json(auditor);
   }),
@@ -29,23 +46,9 @@ router.get(
 
 router.patch(
   '/me',
-  authenticate,
   authorize('AUDITOR'),
   asyncHandler(async (req, res) => {
-    const input = z
-      .object({
-        membershipNumber: z.string().trim().min(1).max(100).nullable().optional(),
-        firmName: z.string().trim().min(1).max(200).nullable().optional(),
-        qualification: z.string().trim().min(1).max(200).nullable().optional(),
-        experienceYears: z.number().int().min(0).max(80).optional(),
-        city: z.string().trim().min(1).max(100).nullable().optional(),
-      })
-      .strict()
-      .refine((value) => Object.keys(value).length > 0, {
-        message: 'Provide at least one profile field to update',
-      })
-      .parse(req.body);
-
+    const input = updateProfileSchema.parse(req.body);
     const auditor = await prisma.auditor.update({
       where: { userId: req.user!.id },
       data: input,
@@ -56,15 +59,10 @@ router.patch(
 
 router.get(
   '/',
-  authenticate,
   authorize('ADMIN'),
   asyncHandler(async (_req, res) => {
     const auditors = await prisma.auditor.findMany({
-      include: {
-        user: {
-          select: { id: true, name: true, email: true, phone: true },
-        },
-      },
+      include: { user: { select: userContact } },
       orderBy: { createdAt: 'desc' },
     });
     res.json(auditors);
@@ -73,17 +71,12 @@ router.get(
 
 router.patch(
   '/:id/status',
-  authenticate,
   authorize('ADMIN'),
   asyncHandler(async (req, res) => {
-    const input = z
-      .object({
-        status: z.enum(['PENDING', 'VERIFIED', 'REJECTED', 'SUSPENDED']),
-      })
-      .parse(req.body);
+    const { status } = statusSchema.parse(req.body);
     const auditor = await prisma.auditor.update({
       where: { id: String(req.params.id) },
-      data: { status: input.status },
+      data: { status },
     });
     res.json(auditor);
   }),

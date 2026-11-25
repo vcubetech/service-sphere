@@ -1,28 +1,109 @@
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
+import {
+  AuditStatus,
+  FindingSeverity,
+  Prisma,
+  TaxReturnStatus,
+} from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../../config/prisma';
+import { HttpError } from '../../lib/httpError';
+import { assertAssignedAuditor, assignedAuditorUserId } from '../../lib/profiles';
+import { userSummary } from '../../lib/selects';
 import { asyncHandler } from '../../middleware/asyncHandler';
 import { authenticate, authorize } from '../../middleware/auth';
+import { AuthUser } from '../../types';
 
 const router = Router();
 
 router.use(authenticate, authorize('AUDITOR', 'ADMIN'));
 
+// ---------------------------------------------------------------- schemas
+
+const assignmentSchema = z.object({
+  taxReturnId: z.string().min(1),
+  auditorId: z.string().min(1),
+});
+
+const assignmentStatusSchema = z.object({
+  status: z.enum([
+    'ASSIGNED',
+    'IN_PROGRESS',
+    'QUERY_RAISED',
+    'APPROVED',
+    'COMPLETED',
+    'REJECTED',
+  ]),
+});
+
+const findingSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  description: z.string().trim().min(1).max(5000),
+  severity: z.nativeEnum(FindingSeverity).optional(),
+  recommendation: z.string().trim().max(5000).optional(),
+});
+
+const reportSchema = z.object({
+  reportNumber: z.string().trim().min(1).max(100).optional(),
+  reportUrl: z.string().url().max(2048).optional(),
+  remarks: z.string().trim().max(5000).optional(),
+});
+
+// ---------------------------------------------------------------- helpers
+
+/** Tax-return statuses from which a return can be sent for audit. */
+const ASSIGNABLE_RETURN_STATUSES: TaxReturnStatus[] = [
+  'DOCUMENT_PENDING',
+  'UNDER_REVIEW',
+  'QUERY_RAISED',
+];
+
+/** Audit outcomes that also move the tax return to a new status. */
+const RETURN_STATUS_FOR_AUDIT_STATUS: Partial<Record<AuditStatus, TaxReturnStatus>> = {
+  QUERY_RAISED: 'QUERY_RAISED',
+  APPROVED: 'APPROVED',
+  REJECTED: 'REJECTED',
+};
+
+const auditorWithUser = {
+  include: { user: { select: userSummary } },
+} satisfies Prisma.AuditorDefaultArgs;
+
+/**
+ * Loads an assignment the caller may act on: admins get any, auditors only
+ * their own. Throws 404/403 otherwise.
+ */
+async function requireAccessibleAssignment(user: AuthUser, id: string) {
+  const assignment = await prisma.auditAssignment.findUnique({
+    where: { id },
+    include: {
+      taxReturn: { select: { status: true } },
+      ...assignedAuditorUserId,
+    },
+  });
+  if (!assignment) {
+    throw HttpError.notFound('Audit assignment not found');
+  }
+  assertAssignedAuditor(
+    user,
+    assignment.auditor.userId,
+    'Assignment is not assigned to you',
+  );
+  return assignment;
+}
+
+// ---------------------------------------------------------------- routes
+
 router.post(
   '/assignments',
   authorize('ADMIN'),
   asyncHandler(async (req, res) => {
-    const input = z
-      .object({
-        taxReturnId: z.string().min(1),
-        auditorId: z.string().min(1),
-      })
-      .parse(req.body);
+    const input = assignmentSchema.parse(req.body);
     const [taxReturn, auditor] = await Promise.all([
       prisma.taxReturn.findUnique({
         where: { id: input.taxReturnId },
-        select: { id: true, status: true, auditorId: true },
+        select: { id: true, status: true },
       }),
       prisma.auditor.findUnique({
         where: { id: input.auditorId },
@@ -31,54 +112,42 @@ router.post(
     ]);
 
     if (!taxReturn) {
-      res.status(404).json({ message: 'Tax return not found' });
-      return;
+      throw HttpError.notFound('Tax return not found');
     }
     if (!auditor || auditor.status !== 'VERIFIED' || !auditor.isAvailable) {
-      res.status(400).json({ message: 'Auditor is not verified and available' });
-      return;
+      throw HttpError.badRequest('Auditor is not verified and available');
     }
-    if (
-      taxReturn.status !== 'DOCUMENT_PENDING' &&
-      taxReturn.status !== 'UNDER_REVIEW' &&
-      taxReturn.status !== 'QUERY_RAISED'
-    ) {
-      res.status(409).json({
-        message: 'Only submitted tax returns can be assigned for audit',
-      });
-      return;
+    if (!ASSIGNABLE_RETURN_STATUSES.includes(taxReturn.status)) {
+      throw HttpError.conflict(
+        'Only submitted tax returns can be assigned for audit',
+      );
     }
 
-    const assignment = await prisma.$transaction(async (transaction) => {
-      const result = await transaction.auditAssignment.create({
+    const [assignment] = await prisma.$transaction([
+      prisma.auditAssignment.create({
         data: {
           taxReturnId: taxReturn.id,
           auditorId: auditor.id,
           status: 'ASSIGNED',
         },
-        include: {
-          auditor: {
-            include: {
-              user: { select: { id: true, name: true, email: true } },
+        include: { auditor: auditorWithUser },
+      }),
+      prisma.taxReturn.update({
+        where: { id: taxReturn.id },
+        data: {
+          auditorId: auditor.id,
+          status: 'UNDER_REVIEW',
+          filingHistories: {
+            create: {
+              previousStatus: taxReturn.status,
+              currentStatus: 'UNDER_REVIEW',
+              changedBy: req.user!.id,
+              remarks: 'Auditor assigned',
             },
           },
         },
-      });
-      await transaction.taxReturn.update({
-        where: { id: taxReturn.id },
-        data: { auditorId: auditor.id, status: 'UNDER_REVIEW' },
-      });
-      await transaction.filingHistory.create({
-        data: {
-          taxReturnId: taxReturn.id,
-          previousStatus: taxReturn.status,
-          currentStatus: 'UNDER_REVIEW',
-          changedBy: req.user!.id,
-          remarks: 'Auditor assigned',
-        },
-      });
-      return result;
-    });
+      }),
+    ]);
 
     res.status(201).json(assignment);
   }),
@@ -87,18 +156,10 @@ router.post(
 router.get(
   '/assignments',
   asyncHandler(async (req, res) => {
-    let where = {};
-    if (req.user!.role === 'AUDITOR') {
-      const auditor = await prisma.auditor.findUnique({
-        where: { userId: req.user!.id },
-        select: { id: true },
-      });
-      if (!auditor) {
-        res.status(404).json({ message: 'Auditor profile not found' });
-        return;
-      }
-      where = { auditorId: auditor.id };
-    }
+    const where: Prisma.AuditAssignmentWhereInput =
+      req.user!.role === 'AUDITOR'
+        ? { auditor: { is: { userId: req.user!.id } } }
+        : {};
 
     const assignments = await prisma.auditAssignment.findMany({
       where,
@@ -106,18 +167,10 @@ router.get(
         taxReturn: {
           include: {
             financialYear: true,
-            customer: {
-              include: {
-                user: { select: { id: true, name: true, email: true } },
-              },
-            },
+            customer: { include: { user: { select: userSummary } } },
           },
         },
-        auditor: {
-          include: {
-            user: { select: { id: true, name: true, email: true } },
-          },
-        },
+        auditor: auditorWithUser,
         findings: true,
         report: true,
       },
@@ -130,110 +183,60 @@ router.get(
 router.patch(
   '/assignments/:id/status',
   asyncHandler(async (req, res) => {
-    const input = z
-      .object({
-        status: z.enum([
-          'ASSIGNED',
-          'IN_PROGRESS',
-          'QUERY_RAISED',
-          'APPROVED',
-          'COMPLETED',
-          'REJECTED',
-        ]),
-      })
-      .parse(req.body);
-    const assignment = await prisma.auditAssignment.findUnique({
-      where: { id: String(req.params.id) },
-      include: { taxReturn: true },
+    const { status } = assignmentStatusSchema.parse(req.body);
+    const assignment = await requireAccessibleAssignment(
+      req.user!,
+      String(req.params.id),
+    );
+
+    const now = new Date();
+    const updateAssignment = prisma.auditAssignment.update({
+      where: { id: assignment.id },
+      data: {
+        status,
+        startedAt:
+          status === 'IN_PROGRESS' ? (assignment.startedAt ?? now) : undefined,
+        completedAt: status === 'COMPLETED' ? now : undefined,
+      },
     });
-    if (!assignment) {
-      res.status(404).json({ message: 'Audit assignment not found' });
+
+    const returnStatus = RETURN_STATUS_FOR_AUDIT_STATUS[status];
+    const previousReturnStatus = assignment.taxReturn.status;
+    if (!returnStatus || returnStatus === previousReturnStatus) {
+      res.json(await updateAssignment);
       return;
     }
-    if (req.user!.role === 'AUDITOR') {
-      const auditor = await prisma.auditor.findUnique({
-        where: { userId: req.user!.id },
-        select: { id: true },
-      });
-      if (!auditor || assignment.auditorId !== auditor.id) {
-        res.status(403).json({ message: 'Assignment is not assigned to you' });
-        return;
-      }
-    }
 
-    const statusDates = {
-      startedAt:
-        input.status === 'IN_PROGRESS'
-          ? assignment.startedAt ?? new Date()
-          : undefined,
-      completedAt:
-        input.status === 'COMPLETED' ? new Date() : undefined,
-    };
-    const taxReturnStatus =
-      input.status === 'QUERY_RAISED'
-        ? 'QUERY_RAISED'
-        : input.status === 'APPROVED'
-          ? 'APPROVED'
-          : input.status === 'REJECTED'
-            ? 'REJECTED'
-            : null;
-
-    const updated = await prisma.$transaction(async (transaction) => {
-      const result = await transaction.auditAssignment.update({
-        where: { id: assignment.id },
-        data: { status: input.status, ...statusDates },
-      });
-      if (taxReturnStatus && assignment.taxReturn.status !== taxReturnStatus) {
-        await transaction.taxReturn.update({
-          where: { id: assignment.taxReturnId },
-          data: { status: taxReturnStatus },
-        });
-        await transaction.filingHistory.create({
-          data: {
-            taxReturnId: assignment.taxReturnId,
-            previousStatus: assignment.taxReturn.status,
-            currentStatus: taxReturnStatus,
-            changedBy: req.user!.id,
-            remarks: `Auditor updated audit status to ${input.status}`,
+    const [updated] = await prisma.$transaction([
+      updateAssignment,
+      prisma.taxReturn.update({
+        where: { id: assignment.taxReturnId },
+        data: {
+          status: returnStatus,
+          filingHistories: {
+            create: {
+              previousStatus: previousReturnStatus,
+              currentStatus: returnStatus,
+              changedBy: req.user!.id,
+              remarks: `Auditor updated audit status to ${status}`,
+            },
           },
-        });
-      }
-      return result;
-    });
+        },
+      }),
+    ]);
     res.json(updated);
   }),
 );
 
 router.post(
   '/assignments/:id/findings',
-  authorize('AUDITOR', 'ADMIN'),
   asyncHandler(async (req, res) => {
-    const input = z
-      .object({
-        title: z.string().trim().min(1).max(200),
-        description: z.string().trim().min(1).max(5000),
-        severity: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).optional(),
-        recommendation: z.string().trim().max(5000).optional(),
-      })
-      .parse(req.body);
-    const assignment = await prisma.auditAssignment.findUnique({
-      where: { id: String(req.params.id) },
-      select: { id: true, auditorId: true },
-    });
-    if (!assignment) {
-      res.status(404).json({ message: 'Audit assignment not found' });
-      return;
-    }
-    if (req.user!.role === 'AUDITOR') {
-      const auditor = await prisma.auditor.findUnique({
-        where: { userId: req.user!.id },
-        select: { id: true },
-      });
-      if (!auditor || assignment.auditorId !== auditor.id) {
-        res.status(403).json({ message: 'Assignment is not assigned to you' });
-        return;
-      }
-    }
+    const input = findingSchema.parse(req.body);
+    const assignment = await requireAccessibleAssignment(
+      req.user!,
+      String(req.params.id),
+    );
+
     const finding = await prisma.auditFinding.create({
       data: { ...input, assignmentId: assignment.id },
     });
@@ -244,36 +247,29 @@ router.post(
 router.patch(
   '/assignments/:id/findings/:findingId',
   asyncHandler(async (req, res) => {
-    const input = z
-      .object({ isResolved: z.boolean() })
-      .parse(req.body);
+    const { isResolved } = z.object({ isResolved: z.boolean() }).parse(req.body);
     const finding = await prisma.auditFinding.findFirst({
       where: {
         id: String(req.params.findingId),
         assignmentId: String(req.params.id),
       },
-      include: { assignment: { select: { auditorId: true } } },
+      select: {
+        id: true,
+        assignment: { select: assignedAuditorUserId },
+      },
     });
     if (!finding) {
-      res.status(404).json({ message: 'Audit finding not found' });
-      return;
+      throw HttpError.notFound('Audit finding not found');
     }
-    if (req.user!.role === 'AUDITOR') {
-      const auditor = await prisma.auditor.findUnique({
-        where: { userId: req.user!.id },
-        select: { id: true },
-      });
-      if (!auditor || finding.assignment.auditorId !== auditor.id) {
-        res.status(403).json({ message: 'Finding is not assigned to you' });
-        return;
-      }
-    }
+    assertAssignedAuditor(
+      req.user!,
+      finding.assignment.auditor.userId,
+      'Finding is not assigned to you',
+    );
+
     const updated = await prisma.auditFinding.update({
       where: { id: finding.id },
-      data: {
-        isResolved: input.isResolved,
-        resolvedAt: input.isResolved ? new Date() : null,
-      },
+      data: { isResolved, resolvedAt: isResolved ? new Date() : null },
     });
     res.json(updated);
   }),
@@ -282,47 +278,23 @@ router.patch(
 router.put(
   '/assignments/:id/report',
   asyncHandler(async (req, res) => {
-    const input = z
-      .object({
-        reportNumber: z.string().trim().min(1).max(100).optional(),
-        reportUrl: z.string().url().max(2048).optional(),
-        remarks: z.string().trim().max(5000).optional(),
-      })
-      .parse(req.body);
-    const assignment = await prisma.auditAssignment.findUnique({
-      where: { id: String(req.params.id) },
-      select: { id: true, auditorId: true },
-    });
-    if (!assignment) {
-      res.status(404).json({ message: 'Audit assignment not found' });
-      return;
-    }
-    if (req.user!.role === 'AUDITOR') {
-      const auditor = await prisma.auditor.findUnique({
-        where: { userId: req.user!.id },
-        select: { id: true },
-      });
-      if (!auditor || assignment.auditorId !== auditor.id) {
-        res.status(403).json({ message: 'Assignment is not assigned to you' });
-        return;
-      }
-    }
+    const input = reportSchema.parse(req.body);
+    const assignment = await requireAccessibleAssignment(
+      req.user!,
+      String(req.params.id),
+    );
+
+    const issuedAt = new Date();
     const report = await prisma.auditReport.upsert({
       where: { assignmentId: assignment.id },
       create: {
+        ...input,
         assignmentId: assignment.id,
         reportNumber:
           input.reportNumber ?? `AUD-${randomUUID().slice(0, 12).toUpperCase()}`,
-        reportUrl: input.reportUrl,
-        remarks: input.remarks,
-        issuedAt: new Date(),
+        issuedAt,
       },
-      update: {
-        reportNumber: input.reportNumber,
-        reportUrl: input.reportUrl,
-        remarks: input.remarks,
-        issuedAt: new Date(),
-      },
+      update: { ...input, issuedAt },
     });
     res.json(report);
   }),
