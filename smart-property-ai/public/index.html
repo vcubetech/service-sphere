@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Smart Property AI — Monitoring Console</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root { --bg:#0f1419; --panel:#171e26; --line:#26313d; --text:#e6edf3; --mute:#8b98a5; --acc:#3fb6a8;
+          --low:#5aa9e6; --medium:#f2c14e; --high:#f08a4b; --critical:#e5484d; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; align-items:center; gap:16px; padding:12px 20px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:17px; margin:0; font-weight:650; letter-spacing:.2px }
+  header .pill { font-size:12px; color:var(--mute); border:1px solid var(--line); padding:2px 10px; border-radius:99px }
+  header form { margin-left:auto; display:flex; gap:6px }
+  input, select, button, textarea { font:inherit; color:var(--text); background:#0f1419; border:1px solid var(--line); border-radius:8px; padding:7px 10px; }
+  button { background:var(--acc); border-color:var(--acc); color:#04201c; font-weight:600; cursor:pointer }
+  button.ghost { background:transparent; color:var(--text); border-color:var(--line); font-weight:500 }
+  button:disabled { opacity:.5; cursor:wait }
+  main { display:grid; grid-template-columns: 1fr 440px; height:calc(100vh - 57px); }
+  #left { display:grid; grid-template-rows:auto 1fr; min-height:0 }
+  .tiles { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; padding:12px 16px; }
+  .tile { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 12px }
+  .tile b { display:block; font-size:22px; font-variant-numeric:tabular-nums }
+  .tile span { color:var(--mute); font-size:12px }
+  #map { min-height:0; margin:0 16px 16px; border-radius:10px; border:1px solid var(--line) }
+  aside { border-left:1px solid var(--line); overflow:auto; }
+  .tabs { display:flex; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:5 }
+  .tabs button { flex:1; background:none; border:0; border-radius:0; color:var(--mute); padding:12px 0; font-weight:550 }
+  .tabs button.on { color:var(--text); box-shadow: inset 0 -2px 0 var(--acc) }
+  .pane { padding:14px 16px; display:none } .pane.on { display:block }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:10px }
+  .card h3 { margin:0 0 4px; font-size:14px }
+  .muted { color:var(--mute); font-size:12.5px }
+  .sev { font-size:11px; font-weight:700; padding:2px 8px; border-radius:99px; color:#111 }
+  .sev.LOW{background:var(--low)} .sev.MEDIUM{background:var(--medium)} .sev.HIGH{background:var(--high)} .sev.CRITICAL{background:var(--critical); color:#fff}
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+  .rec { border-left:3px solid var(--acc); padding:4px 0 4px 10px; margin:8px 0; }
+  .cite { font-size:12px; color:var(--mute); border-top:1px dashed var(--line); margin-top:6px; padding-top:6px }
+  .compare { position:relative; width:100%; aspect-ratio:1; overflow:hidden; border-radius:8px; border:1px solid var(--line); background:#000 }
+  .compare img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover }
+  .compare .top { clip-path: inset(0 50% 0 0) }
+  .bar { height:8px; background:#0b0f13; border-radius:99px; overflow:hidden; position:relative }
+  .bar i { position:absolute; inset:0 auto 0 0; background:var(--acc) } .bar em { position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--medium) }
+  table { width:100%; border-collapse:collapse; font-size:12.5px } td,th { text-align:left; padding:4px 6px; border-bottom:1px solid var(--line) }
+  .chat { display:flex; flex-direction:column; gap:8px }
+  .msg { padding:8px 10px; border-radius:10px; white-space:pre-wrap } .msg.user{ background:#1f3a37; align-self:flex-end } .msg.ai{ background:var(--panel); border:1px solid var(--line) }
+  .steps { font-size:11.5px; color:var(--mute) }
+  label { display:block; font-size:12px; color:var(--mute); margin:6px 0 2px }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:6px }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛰 Smart Property AI</h1>
+  <span class="pill" id="llm">…</span>
+  <form id="surveyForm">
+    <input id="sn" placeholder="Survey no. e.g. 123" size="12" required />
+    <input id="sd" placeholder="Sub-div" size="6" />
+    <button>Find parcel</button>
+  </form>
+</header>
+
+<main>
+  <section id="left">
+    <div class="tiles" id="tiles"></div>
+    <div id="map"></div>
+  </section>
+
+  <aside>
+    <div class="tabs">
+      <button data-tab="alerts" class="on">Alerts</button>
+      <button data-tab="property">Property</button>
+      <button data-tab="construction">Construction</button>
+      <button data-tab="chat">AI Assistant</button>
+    </div>
+
+    <div class="pane on" id="alerts">
+      <div class="row" style="margin-bottom:10px">
+        <select id="fSev"><option value="">All severities</option><option>CRITICAL</option><option>HIGH</option><option>MEDIUM</option><option>LOW</option></select>
+        <select id="fStatus"><option>OPEN</option><option>ACKNOWLEDGED</option><option>RESOLVED</option><option value="">Any status</option></select>
+      </div>
+      <div id="alertList"></div>
+    </div>
+
+    <div class="pane" id="property"><p class="muted">Click a parcel on the map or search a survey number.</p></div>
+    <div class="pane" id="construction"></div>
+
+    <div class="pane" id="chat">
+      <div class="chat" id="chatLog">
+        <div class="msg ai">Ask me about survey numbers, alerts, construction progress or bye-laws.
+e.g. “What changed on survey 123/4 and is it a violation?”</div>
+      </div>
+      <form id="chatForm" class="row" style="margin-top:10px">
+        <input id="q" style="flex:1" placeholder="Ask the property AI…" required />
+        <button>Ask</button>
+      </form>
+    </div>
+  </aside>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const api = async (url, opts = {}) => {
+  const r = await fetch('/api' + url, { headers: opts.body && !(opts.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}, ...opts });
+  const j = r.status === 204 ? null : await r.json();
+  if (!r.ok) throw new Error(j?.error || r.statusText);
+  return j;
+};
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const sn = (p) => `${p.surveyNumber ?? p.survey_number}${(p.subDivision ?? p.sub_division) ? '/' + (p.subDivision ?? p.sub_division) : ''}`;
+const SEVCOL = { LOW: '#5aa9e6', MEDIUM: '#f2c14e', HIGH: '#f08a4b', CRITICAL: '#e5484d' };
+let current = null, chatHistory = [];
+
+// ---------- tabs
+document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => tab(b.dataset.tab));
+function tab(name) {
+  document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
+  document.querySelectorAll('.pane').forEach((p) => p.classList.toggle('on', p.id === name));
+  if (name === 'construction') loadConstruction();
+}
+
+// ---------- map
+const map = L.map('map').setView([12.9707, 77.5907], 18);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 21, maxNativeZoom: 19, attribution: 'Esri World Imagery' }).addTo(map);
+let parcelLayer, regionLayer = L.layerGroup().addTo(map);
+
+async function loadParcels() {
+  const fc = await api('/properties/geojson');
+  parcelLayer?.remove();
+  parcelLayer = L.geoJSON(fc, {
+    style: (f) => ({ color: f.properties.max_severity ? SEVCOL[f.properties.max_severity] : '#3fb6a8', weight: 2, fillOpacity: .12 }),
+    onEachFeature: (f, l) => {
+      l.bindTooltip(`Sy. No. ${sn(f.properties)} · ${f.properties.owner_name}<br>${f.properties.land_use} · ${Math.round(f.properties.area_sqm || 0)} m² · ${f.properties.open_alerts} open alerts`);
+      l.on('click', () => openProperty(f.properties.id));
+    },
+  }).addTo(map);
+  if (fc.features.length) map.fitBounds(parcelLayer.getBounds(), { padding: [30, 30] });
+}
+
+// ---------- stats
+async function loadStats() {
+  const s = await api('/dashboard/stats');
+  const t = [['Parcels', s.properties], ['Satellite images', s.images], ['Change scans', s.detections],
+    ['Open alerts', s.openAlerts], ['Critical / High', `${s.alertsBySeverity.CRITICAL || 0} / ${s.alertsBySeverity.HIGH || 0}`]];
+  $('#tiles').innerHTML = t.map(([k, v]) => `<div class="tile"><b>${v}</b><span>${k}</span></div>`).join('');
+}
+
+// ---------- alerts
+async function loadAlerts() {
+  const q = new URLSearchParams({ ...( $('#fSev').value && { severity: $('#fSev').value }), ...($('#fStatus').value && { status: $('#fStatus').value }) });
+  const list = await api('/alerts?' + q);
+  $('#alertList').innerHTML = list.length ? list.map(alertCard).join('') : '<p class="muted">No alerts 🎉</p>';
+}
+function alertCard(a) {
+  const cites = (a.citations || []).map((c) => `<div>📘 <b>${esc(c.source)}</b> — ${esc(c.title)}</div>`).join('');
+  return `<div class="card">
+    <div class="row"><span class="sev ${a.severity}">${a.severity}</span><span class="muted">${a.type.replace(/_/g, ' ')}</span>
+      <span class="muted" style="margin-left:auto">${new Date(a.createdAt).toLocaleDateString()}</span></div>
+    <h3 style="margin-top:6px">${esc(a.title)}</h3>
+    <div>${esc(a.message)}</div>
+    ${a.recommendation ? `<div class="rec">➡ ${esc(a.recommendation)}</div>` : ''}
+    ${cites ? `<div class="cite">${cites}</div>` : ''}
+    <div class="row" style="margin-top:8px">
+      ${a.property ? `<button class="ghost" onclick="openProperty('${a.propertyId}')">Sy. No. ${esc(sn(a.property))}</button>` : ''}
+      ${a.status === 'OPEN' ? `<button class="ghost" onclick="setAlert('${a.id}','ACKNOWLEDGED')">Acknowledge</button>` : ''}
+      ${a.status !== 'RESOLVED' ? `<button class="ghost" onclick="setAlert('${a.id}','RESOLVED')">Resolve</button>` : ''}
+    </div></div>`;
+}
+async function setAlert(id, status) { await api('/alerts/' + id, { method: 'PATCH', body: JSON.stringify({ status }) }); refresh(); }
+$('#fSev').onchange = $('#fStatus').onchange = loadAlerts;
+
+// ---------- property
+async function openProperty(id) {
+  tab('property');
+  $('#property').innerHTML = '<p class="muted">Loading…</p>';
+  const [p, images, dets] = await Promise.all([api('/properties/' + id), api(`/properties/${id}/images`), api(`/properties/${id}/detections`)]);
+  current = p;
+  const d = dets[0];
+  regionLayer.clearLayers();
+  if (p.boundary) map.fitBounds(L.geoJSON(p.boundary).getBounds(), { maxZoom: 19, padding: [60, 60] });
+
+  $('#property').innerHTML = `
+    <div class="card">
+      <h3>Sy. No. ${esc(sn(p))} — ${esc(p.village)}, ${esc(p.district)}</h3>
+      <div class="muted">${esc(p.ownerName)} · ${p.landUse} · ${Math.round(p.areaSqm || 0)} m²</div>
+      <div class="muted">Neighbours: ${p.neighbours.map((n) => 'Sy. ' + sn(n)).join(', ') || '—'}</div>
+      <div class="row" style="margin-top:10px">
+        <button id="scanBtn" onclick="scan('${p.id}')" ${images.length < 2 ? 'disabled title="Need 2+ images"' : ''}>🤖 Run AI scan</button>
+        <span class="muted">${images.length} images</span>
+      </div>
+      <div id="scanOut"></div>
+    </div>
+    ${d ? detectionCard(d) : '<p class="muted">No change scans yet.</p>'}
+    <div class="card"><h3>Upload satellite / drone image</h3>
+      <form id="up">
+        <input type="file" name="image" accept="image/*" required />
+        <div class="grid2"><div><label>Captured</label><input type="date" name="capturedAt" required></div>
+        <div><label>Source</label><input name="source" placeholder="SENTINEL-2 / DRONE"></div>
+        <div><label>Min lon</label><input name="minLon" required></div><div><label>Min lat</label><input name="minLat" required></div>
+        <div><label>Max lon</label><input name="maxLon" required></div><div><label>Max lat</label><input name="maxLat" required></div></div>
+        <div class="row" style="margin-top:8px"><button>Upload</button><button type="button" class="ghost" id="useExtent">Use last image extent</button></div>
+      </form></div>
+    <div class="card"><h3>Images</h3><table>${images.map((i) => `<tr><td>${i.capturedAt.slice(0, 10)}</td><td>${esc(i.source)}</td><td>${i.width}×${i.height}</td><td>${i.cloudCover ?? '–'}% cloud</td></tr>`).join('')}</table></div>`;
+
+  if (d) drawRegions(d.id);
+  const last = images.at(-1);
+  $('#useExtent').onclick = () => last && ['minLon', 'minLat', 'maxLon', 'maxLat'].forEach((k) => $('#up')[k].value = last[k]);
+  $('#up').onsubmit = async (e) => {
+    e.preventDefault();
+    try { await api(`/properties/${id}/images`, { method: 'POST', body: new FormData(e.target) }); openProperty(id); }
+    catch (err) { alert(err.message); }
+  };
+}
+
+function detectionCard(d) {
+  const regions = d.regions.map((r) => `<tr><td>${r.type.replace(/_/g, ' ')}</td><td>${r.areaSqm} m²</td><td>${Math.round(r.confidence * 100)}%</td><td>${r.insideBoundary ? 'inside' : 'outside'}${r.pixelBox?.crossesBoundary ? ' ⚠ crosses' : ''}</td></tr>`).join('');
+  return `<div class="card">
+    <h3>Latest comparison: ${d.beforeImage.capturedAt.slice(0, 10)} → ${d.afterImage.capturedAt.slice(0, 10)}</h3>
+    <div class="compare" id="cmp">
+      <img src="/api/images/${d.afterImageId}/file" alt="after">
+      <img class="top" src="/api/images/${d.beforeImageId}/file" alt="before" id="cmpTop">
+    </div>
+    <input type="range" min="0" max="100" value="50" style="width:100%" oninput="$('#cmpTop').style.clipPath='inset(0 '+(100-this.value)+'% 0 0)'">
+    <div class="muted">◀ before · after ▶ — <a href="/api/detections/${d.id}/overlay" target="_blank" style="color:var(--acc)">open AI change overlay</a></div>
+    <p>${esc(d.summary)}</p>
+    <table><tr><th>Change</th><th>Area</th><th>Conf.</th><th>Parcel</th></tr>${regions}</table>
+  </div>`;
+}
+
+async function drawRegions(detectionId) {
+  const d = await api('/detections/' + detectionId);
+  regionLayer.clearLayers();
+  for (const e of d.encroachment) {
+    L.geoJSON(e.geometry, { style: { color: e.outsideSqm > 5 ? '#e5484d' : '#f2c14e', weight: 2, dashArray: '4 3', fillOpacity: .25 } })
+      .bindTooltip(`${e.type} · ${Math.round(e.areaSqm)} m² · outside ${Number(e.outsideSqm).toFixed(1)} m²`).addTo(regionLayer);
+  }
+}
+
+async function scan(id) {
+  const b = $('#scanBtn'); b.disabled = true; b.textContent = '🤖 Scanning…';
+  try {
+    const r = await api(`/properties/${id}/scan`, { method: 'POST', body: '{}' });
+    $('#scanOut').innerHTML = `<div class="rec"><span class="sev ${r.overallRisk}">${r.overallRisk}</span> ${esc(r.summary)}</div>
+      <div class="steps">${r.steps.map((s) => s.node).join(' → ')} (${r.mode})</div>`;
+    await refresh(); await openProperty(id);
+  } catch (e) { alert(e.message); } finally { b.disabled = false; b.textContent = '🤖 Run AI scan'; }
+}
+
+// ---------- construction
+async function loadConstruction() {
+  const list = await api('/construction');
+  $('#construction').innerHTML = list.length ? list.map((p) => {
+    const last = p.progress[0];
+    const prog = last?.progressPct ?? 0;
+    return `<div class="card">
+      <div class="row"><h3>Sy. No. ${esc(sn(p.property))} — ${esc(p.description || '')}</h3><span class="sev ${p.status === 'STALLED' ? 'HIGH' : 'LOW'}" style="margin-left:auto">${p.status}</span></div>
+      <div class="muted">Permit ${esc(p.permitNumber || '–')} · ${p.startDate.slice(0, 10)} → ${p.expectedEndDate.slice(0, 10)} · max coverage ${p.permittedBuiltUpPct}%</div>
+      <div style="margin:10px 0 4px" class="row"><b>${prog}%</b><span class="muted">actual · plan today ${p.expectedNowPct}% · stage: ${esc(last?.stage || '—')}</span></div>
+      <div class="bar"><i style="width:${prog}%"></i><em style="left:${p.expectedNowPct}%"></em></div>
+      ${last ? `<div class="muted" style="margin-top:6px">Built-up coverage now ${last.builtUpPct}% (last image ${last.recordedAt.slice(0, 10)})</div>` : ''}
+      <button class="ghost" style="margin-top:8px" onclick="openProperty('${p.propertyId}')">Open property</button>
+    </div>`;
+  }).join('') : '<p class="muted">No construction projects.</p>';
+}
+
+// ---------- survey search
+$('#surveyForm').onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const q = $('#sd').value ? '?subDivision=' + encodeURIComponent($('#sd').value) : '';
+    const rows = await api('/properties/survey/' + encodeURIComponent($('#sn').value) + q);
+    openProperty(rows[0].id);
+  } catch (err) { alert(err.message); }
+};
+
+// ---------- chat
+$('#chatForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const question = $('#q').value; $('#q').value = '';
+  const log = $('#chatLog');
+  log.insertAdjacentHTML('beforeend', `<div class="msg user">${esc(question)}</div><div class="msg ai" id="pending">Thinking…</div>`);
+  try {
+    const r = await api('/agent/chat', { method: 'POST', body: JSON.stringify({ question, propertyId: current?.id, history: chatHistory.slice(-10) }) });
+    $('#pending').outerHTML = `<div class="msg ai">${esc(r.answer)}${r.toolCalls.length ? `<div class="steps">🔧 ${r.toolCalls.map((t) => t.tool).join(', ')}</div>` : ''}</div>`;
+    chatHistory.push({ role: 'user', content: question }, { role: 'assistant', content: r.answer });
+  } catch (err) { $('#pending').outerHTML = `<div class="msg ai">⚠ ${esc(err.message)}</div>`; }
+  log.parentElement.scrollTop = 1e9;
+};
+
+async function refresh() { await Promise.all([loadStats(), loadAlerts(), loadParcels()]); }
+api('/health').then((h) => $('#llm').textContent = 'AI: ' + h.llm);
+refresh();
+</script>
+</body>
+</html>

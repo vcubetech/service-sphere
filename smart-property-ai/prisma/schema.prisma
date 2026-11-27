@@ -1,0 +1,250 @@
+// AI-Based Smart Property Management — Prisma schema
+// PostgreSQL + PostGIS (geometry) + pgvector (RAG embeddings)
+// Geometry / vector columns are `Unsupported` in Prisma, so they are written and
+// queried through $queryRaw / $executeRaw in src/services/geoService.js and src/rag/.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis, vector]
+}
+
+enum LandUse {
+  RESIDENTIAL
+  COMMERCIAL
+  AGRICULTURAL
+  INDUSTRIAL
+  GOVERNMENT
+  VACANT
+}
+
+enum ChangeType {
+  NEW_CONSTRUCTION
+  DEMOLITION
+  VEGETATION_LOSS
+  VEGETATION_GAIN
+  EARTHWORK
+  WATER_CHANGE
+  UNKNOWN
+}
+
+enum AlertType {
+  UNAUTHORIZED_CONSTRUCTION
+  ENCROACHMENT
+  PERMIT_VIOLATION
+  CONSTRUCTION_DELAY
+  CONSTRUCTION_STALLED
+  DEMOLITION_DETECTED
+  VEGETATION_LOSS
+  LAND_USE_VIOLATION
+  GENERAL
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  DISMISSED
+}
+
+enum ProjectStatus {
+  PLANNED
+  IN_PROGRESS
+  STALLED
+  COMPLETED
+}
+
+model Property {
+  id           String   @id @default(uuid())
+  surveyNumber String   @map("survey_number")
+  subDivision  String?  @map("sub_division")
+  village      String
+  taluk        String?
+  district     String
+  state        String
+  ownerName    String   @map("owner_name")
+  ownerContact String?  @map("owner_contact")
+  landUse      LandUse  @default(RESIDENTIAL) @map("land_use")
+  areaSqm      Float?   @map("area_sqm")
+  boundary     Unsupported("geometry(Polygon, 4326)")?
+  metadata     Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  images     SatelliteImage[]
+  detections ChangeDetection[]
+  projects   ConstructionProject[]
+  alerts     Alert[]
+  agentRuns  AgentRun[]
+
+  @@unique([surveyNumber, subDivision, village, district], name: "survey_key")
+  @@index([district, village])
+  @@map("properties")
+}
+
+model SatelliteImage {
+  id          String   @id @default(uuid())
+  propertyId  String   @map("property_id")
+  capturedAt  DateTime @map("captured_at")
+  source      String   @default("UPLOAD") // SENTINEL-2, PLANET, DRONE, UPLOAD...
+  filePath    String   @map("file_path")
+  width       Int
+  height      Int
+  // geographic extent of the image (EPSG:4326)
+  minLon      Float    @map("min_lon")
+  minLat      Float    @map("min_lat")
+  maxLon      Float    @map("max_lon")
+  maxLat      Float    @map("max_lat")
+  resolutionM Float?   @map("resolution_m")
+  cloudCover  Float?   @map("cloud_cover")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  property     Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  asBefore     ChangeDetection[] @relation("BeforeImage")
+  asAfter      ChangeDetection[] @relation("AfterImage")
+
+  @@index([propertyId, capturedAt])
+  @@map("satellite_images")
+}
+
+model ChangeDetection {
+  id             String   @id @default(uuid())
+  propertyId     String   @map("property_id")
+  beforeImageId  String   @map("before_image_id")
+  afterImageId   String   @map("after_image_id")
+  changedPercent Float    @map("changed_percent")
+  builtUpBefore  Float    @map("built_up_before")   // % of parcel
+  builtUpAfter   Float    @map("built_up_after")    // % of parcel
+  vegetationBefore Float  @map("vegetation_before")
+  vegetationAfter  Float  @map("vegetation_after")
+  overlayPath    String?  @map("overlay_path")
+  summary        String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  property    Property         @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  beforeImage SatelliteImage   @relation("BeforeImage", fields: [beforeImageId], references: [id])
+  afterImage  SatelliteImage   @relation("AfterImage", fields: [afterImageId], references: [id])
+  regions     ChangeRegion[]
+  alerts      Alert[]
+  progress    ConstructionProgress[]
+
+  @@index([propertyId, createdAt])
+  @@map("change_detections")
+}
+
+model ChangeRegion {
+  id             String     @id @default(uuid())
+  detectionId    String     @map("detection_id")
+  type           ChangeType
+  confidence     Float
+  areaSqm        Float      @map("area_sqm")
+  pixelBox       Json       @map("pixel_box") // {x,y,w,h}
+  insideBoundary Boolean    @default(true) @map("inside_boundary")
+  geom           Unsupported("geometry(Polygon, 4326)")?
+
+  detection ChangeDetection @relation(fields: [detectionId], references: [id], onDelete: Cascade)
+
+  @@map("change_regions")
+}
+
+model ConstructionProject {
+  id                  String        @id @default(uuid())
+  propertyId          String        @map("property_id")
+  permitNumber        String?       @map("permit_number")
+  description         String?
+  permittedBuiltUpPct Float         @map("permitted_built_up_pct") // max ground coverage %
+  permittedFloors     Int?          @map("permitted_floors")
+  targetBuiltUpPct    Float         @map("target_built_up_pct")    // planned final footprint %
+  baselineBuiltUpPct  Float?        @map("baseline_built_up_pct")  // footprint before work began (set on first scan)
+  startDate           DateTime      @map("start_date")
+  expectedEndDate     DateTime      @map("expected_end_date")
+  status              ProjectStatus @default(PLANNED)
+  createdAt           DateTime      @default(now()) @map("created_at")
+
+  property Property               @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  progress ConstructionProgress[]
+
+  @@map("construction_projects")
+}
+
+model ConstructionProgress {
+  id              String   @id @default(uuid())
+  projectId       String   @map("project_id")
+  detectionId     String?  @map("detection_id")
+  recordedAt      DateTime @map("recorded_at")
+  builtUpPct      Float    @map("built_up_pct")
+  progressPct     Float    @map("progress_pct")
+  expectedPct     Float    @map("expected_pct")
+  stage           String
+  notes           String?
+
+  project   ConstructionProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  detection ChangeDetection?    @relation(fields: [detectionId], references: [id])
+
+  @@index([projectId, recordedAt])
+  @@map("construction_progress")
+}
+
+model Alert {
+  id             String      @id @default(uuid())
+  propertyId     String      @map("property_id")
+  detectionId    String?     @map("detection_id")
+  type           AlertType
+  severity       Severity
+  title          String
+  message        String
+  recommendation String?
+  citations      Json?       // RAG sources used by the agent
+  status         AlertStatus @default(OPEN)
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  property  Property         @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  detection ChangeDetection? @relation(fields: [detectionId], references: [id])
+
+  @@index([status, severity])
+  @@index([propertyId, createdAt])
+  @@map("alerts")
+}
+
+// RAG knowledge base: building bye-laws, zoning rules, land records SOPs ...
+model KnowledgeChunk {
+  id        String   @id @default(uuid())
+  source    String
+  title     String?
+  content   String
+  metadata  Json?
+  // dimension must match EMBEDDING_DIM (1536 = text-embedding-3-small)
+  embedding Unsupported("vector(1536)")?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([source])
+  @@map("knowledge_chunks")
+}
+
+model AgentRun {
+  id         String   @id @default(uuid())
+  propertyId String?  @map("property_id")
+  trigger    String   // SCAN | CHAT | SCHEDULED
+  input      Json?
+  output     Json?
+  steps      Json?
+  durationMs Int?     @map("duration_ms")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  property Property? @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+
+  @@map("agent_runs")
+}

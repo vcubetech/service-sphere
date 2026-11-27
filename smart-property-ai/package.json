@@ -1,0 +1,41 @@
+{
+  "name": "smart-property-ai",
+  "version": "1.0.0",
+  "description": "AI-Based Smart Property Management: satellite change detection, construction monitoring, survey-number parcels and agentic AI alerts",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "db:init": "node scripts/init-db.js",
+    "db:push": "prisma db push",
+    "db:generate": "prisma generate",
+    "db:seed": "node scripts/seed.js",
+    "rag:ingest": "node scripts/ingest-docs.js",
+    "demo:images": "node scripts/generate-demo-images.js",
+    "setup": "npm run db:generate && npm run db:init && npm run db:push && node scripts/init-db.js --indexes && npm run demo:images && npm run rag:ingest && npm run db:seed",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.40",
+    "@langchain/langgraph": "^0.2.50",
+    "@langchain/openai": "^0.4.4",
+    "@prisma/client": "^6.4.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "node-cron": "^3.0.3",
+    "sharp": "^0.33.5",
+    "swagger-ui-express": "^5.0.1",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "prisma": "^6.4.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

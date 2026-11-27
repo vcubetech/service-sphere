@@ -1,0 +1,336 @@
+# Smart Property AI: every API call, ready to run manually.
+# VS Code: install the "REST Client" extension and click "Send Request" above each block.
+# Interactive alternative: http://localhost:4000/api/docs (Swagger UI)
+#
+# The IDs below come from the seeded demo data (npm run db:seed).
+# Re-seeding generates NEW ids. Refresh them with GET /api/properties, /images, /alerts...
+
+@base = http://localhost:4000/api
+
+# Sy. No. 123/4 Yelahanka (the parcel with alerts, images and a permit)
+@propertyId = 5a882dae-6a66-4f9c-856f-95c9572463c7
+# Other seeded parcels: 123/5 = e100fe75-d5ab-40bf-8210-1b9f7a1ea184
+#                       124/1 = 8431796e-fa5a-41dc-a03f-ed8713d3dd70
+#                       125   = 59a76f74-9a1d-41de-869d-940566fc2035
+
+# Images of 123/4 (Jan / Jun / Nov 2026)
+@imageJan = 43fc262e-de87-499f-8ca0-7feb1b1c656f
+@imageJun = 24516f78-9bd0-4b0f-aedc-a6f834dc1826
+@imageNov = d73d1b04-bedb-471f-a6db-423c941643ea
+
+@detectionId = eea10913-a19f-4707-865b-9368fa1f2438
+@projectId   = c7d98e3b-ac9c-4dc6-8757-b766491f0d98
+
+# Alerts: CRITICAL encroachment / HIGH permit violation / MEDIUM vegetation loss
+@alertId = 5d7f00f7-ebf8-460c-a645-fd44e13a5098
+
+
+########################################################################
+# 1. SYSTEM
+########################################################################
+
+### 1.1 Health check
+GET {{base}}/health
+
+### 1.2 Dashboard stats
+GET {{base}}/dashboard/stats
+
+
+########################################################################
+# 2. PROPERTIES (survey-number parcels)
+########################################################################
+
+### 2.1 List all parcels
+GET {{base}}/properties
+
+### 2.2 List parcels with filters (all optional)
+#   landUse: RESIDENTIAL | COMMERCIAL | AGRICULTURAL | INDUSTRIAL | GOVERNMENT | VACANT
+#   q:       matches survey number or owner name
+GET {{base}}/properties?district=Bengaluru Urban&village=Yelahanka&landUse=RESIDENTIAL&q=123
+
+### 2.3 All parcels as GeoJSON (district / village optional)
+GET {{base}}/properties/geojson?district=Bengaluru Urban
+
+### 2.4 Survey-number lookup (subDivision / village / district optional)
+GET {{base}}/properties/survey/123?subDivision=4&village=Yelahanka&district=Bengaluru Urban
+
+### 2.5 Survey-number lookup, not found -> 404
+GET {{base}}/properties/survey/999
+
+### 2.6 Which parcel contains this GPS point?
+GET {{base}}/properties/at?lon=77.59075&lat=12.97075
+
+### 2.7 Parcels within a radius (metres) of a point
+GET {{base}}/properties/at?lon=77.59075&lat=12.97075&radius=200
+
+### 2.8 Parcel detail (with neighbours, open alerts, projects)
+GET {{base}}/properties/{{propertyId}}
+
+### 2.9 Create a parcel
+#   required: surveyNumber, village, district, state, ownerName
+#   optional: subDivision, taluk, ownerContact, landUse (default RESIDENTIAL), boundary, metadata
+#   boundary: GeoJSON Polygon [lon, lat], outer ring closed (first point == last), >= 4 points
+#   Sending the same surveyNumber+subDivision+village+district twice -> 409 Duplicate
+# @name newProperty
+POST {{base}}/properties
+Content-Type: application/json
+
+{
+  "surveyNumber": "210",
+  "subDivision": "2",
+  "village": "Jakkur",
+  "taluk": "Yelahanka",
+  "district": "Bengaluru Urban",
+  "state": "Karnataka",
+  "ownerName": "Anita Rao",
+  "ownerContact": "+91 98450 12345",
+  "landUse": "RESIDENTIAL",
+  "metadata": { "khataNumber": "KH-2210" },
+  "boundary": {
+    "type": "Polygon",
+    "coordinates": [[
+      [77.6001, 12.9801],
+      [77.6004, 12.9801],
+      [77.6004, 12.9804],
+      [77.6001, 12.9804],
+      [77.6001, 12.9801]
+    ]]
+  }
+}
+
+### 2.10 Update the parcel created in 2.9 (any subset of 2.9's fields)
+PATCH {{base}}/properties/{{newProperty.response.body.id}}
+Content-Type: application/json
+
+{
+  "ownerContact": "+91 98450 99999",
+  "landUse": "COMMERCIAL"
+}
+
+### 2.11 Validation error example -> 400 (missing required fields, open polygon ring)
+POST {{base}}/properties
+Content-Type: application/json
+
+{
+  "surveyNumber": "211",
+  "boundary": { "type": "Polygon", "coordinates": [[[77.6, 12.98], [77.61, 12.98], [77.61, 12.99]]] }
+}
+
+
+########################################################################
+# 3. SATELLITE IMAGES
+########################################################################
+
+### 3.1 Image timeline of a parcel
+GET {{base}}/properties/{{propertyId}}/images
+
+### 3.2 Raw image file (open in browser to view)
+GET {{base}}/images/{{imageNov}}/file
+
+### 3.3 Upload an image (multipart/form-data)
+#   required: image (png/jpg/tiff/webp, max 200 MB), capturedAt, minLon, minLat, maxLon, maxLat
+#   optional: source (SENTINEL-2 | PLANET | DRONE | UPLOAD...), resolutionM, cloudCover (0-100)
+#   Extent must satisfy minLon < maxLon and minLat < maxLat
+#   Uploads to the parcel created in 2.9, using a demo scene (extent from data/demo/extent.json)
+POST {{base}}/properties/{{newProperty.response.body.id}}/images
+Content-Type: multipart/form-data; boundary=----SPMBoundary
+
+------SPMBoundary
+Content-Disposition: form-data; name="capturedAt"
+
+2026-11-25
+------SPMBoundary
+Content-Disposition: form-data; name="source"
+
+DRONE
+------SPMBoundary
+Content-Disposition: form-data; name="minLon"
+
+77.59
+------SPMBoundary
+Content-Disposition: form-data; name="minLat"
+
+12.97
+------SPMBoundary
+Content-Disposition: form-data; name="maxLon"
+
+77.5915
+------SPMBoundary
+Content-Disposition: form-data; name="maxLat"
+
+12.9715
+------SPMBoundary
+Content-Disposition: form-data; name="resolutionM"
+
+0.5
+------SPMBoundary
+Content-Disposition: form-data; name="cloudCover"
+
+5
+------SPMBoundary
+Content-Disposition: form-data; name="image"; filename="scene_2026-11-20.png"
+Content-Type: image/png
+
+< ./data/demo/scene_2026-11-20.png
+------SPMBoundary--
+
+# Same upload with curl (Git Bash):
+# curl -F image=@data/demo/scene_2026-11-20.png -F capturedAt=2026-11-25 -F source=DRONE \
+#      -F minLon=77.59 -F minLat=12.97 -F maxLon=77.5915 -F maxLat=12.9715 \
+#      http://localhost:4000/api/properties/<propertyId>/images
+
+
+########################################################################
+# 4. CHANGE DETECTION & AI SCAN
+########################################################################
+
+### 4.1 Change detection on the two latest images (empty body)
+POST {{base}}/properties/{{propertyId}}/detect
+Content-Type: application/json
+
+{}
+
+### 4.2 Change detection on a chosen pair (Jan -> Nov)
+POST {{base}}/properties/{{propertyId}}/detect
+Content-Type: application/json
+
+{
+  "beforeImageId": "{{imageJan}}",
+  "afterImageId": "{{imageNov}}"
+}
+
+### 4.3 Full AI agent scan (detect -> construction -> rules -> RAG -> LLM -> alerts)
+#   Body optional, same fields as 4.2. Returns 422 if the parcel has < 2 images.
+#   NOTE: creates new alerts and detections every time.
+POST {{base}}/properties/{{propertyId}}/scan
+Content-Type: application/json
+
+{
+  "beforeImageId": "{{imageJun}}",
+  "afterImageId": "{{imageNov}}"
+}
+
+### 4.4 Scan a parcel with no images -> 422
+POST {{base}}/properties/{{newProperty.response.body.id}}/scan
+Content-Type: application/json
+
+{}
+
+### 4.5 Detection history of a parcel
+GET {{base}}/properties/{{propertyId}}/detections
+
+### 4.6 Detection detail (regions, images, alerts, encroachment report)
+GET {{base}}/detections/{{detectionId}}
+
+### 4.7 Detection overlay PNG (open in browser to view)
+GET {{base}}/detections/{{detectionId}}/overlay
+
+### 4.8 Agent audit trail (last 20 runs, with step trace)
+GET {{base}}/properties/{{propertyId}}/agent-runs
+
+
+########################################################################
+# 5. CONSTRUCTION PROJECTS (permits)
+########################################################################
+
+### 5.1 List projects (status optional: PLANNED | IN_PROGRESS | STALLED | COMPLETED)
+GET {{base}}/construction
+
+### 5.2 List projects filtered by status
+GET {{base}}/construction?status=COMPLETED
+
+### 5.3 Project timeline: progress vs plan
+GET {{base}}/construction/{{projectId}}
+
+### 5.4 Register a permit project
+#   required: propertyId, permittedBuiltUpPct (0-100), targetBuiltUpPct (0-100), startDate, expectedEndDate
+#   optional: permitNumber, description, permittedFloors (positive int)
+#   expectedEndDate must be after startDate
+POST {{base}}/construction
+Content-Type: application/json
+
+{
+  "propertyId": "{{newProperty.response.body.id}}",
+  "permitNumber": "BBMP/LP/2026/0999",
+  "description": "G+2 residential building",
+  "permittedBuiltUpPct": 50,
+  "permittedFloors": 3,
+  "targetBuiltUpPct": 45,
+  "startDate": "2026-03-01",
+  "expectedEndDate": "2027-06-30"
+}
+
+
+########################################################################
+# 6. ALERTS
+########################################################################
+
+### 6.1 All alerts
+GET {{base}}/alerts
+
+### 6.2 Filtered alerts (all optional)
+#   status:   OPEN | ACKNOWLEDGED | RESOLVED | DISMISSED
+#   severity: LOW | MEDIUM | HIGH | CRITICAL
+GET {{base}}/alerts?status=OPEN&severity=CRITICAL&propertyId={{propertyId}}&limit=10
+
+### 6.3 Acknowledge an alert
+PATCH {{base}}/alerts/{{alertId}}
+Content-Type: application/json
+
+{ "status": "ACKNOWLEDGED" }
+
+### 6.4 Re-open the alert
+PATCH {{base}}/alerts/{{alertId}}
+Content-Type: application/json
+
+{ "status": "OPEN" }
+
+
+########################################################################
+# 7. KNOWLEDGE BASE (RAG)
+########################################################################
+
+### 7.1 Ingested documents with chunk counts
+GET {{base}}/knowledge/sources
+
+### 7.2 Semantic search (q min 2 chars, k optional, max 20)
+GET {{base}}/knowledge/search?q=encroachment on neighbouring survey number&k=3
+
+### 7.3 Add a regulation document
+#   required: source, title, text (min 20 chars); optional: metadata
+POST {{base}}/knowledge
+Content-Type: application/json
+
+{
+  "source": "setback-rules.md",
+  "title": "Setback rules for residential plots",
+  "text": "Minimum front setback for plots up to 250 square metres is 1.5 metres. Side and rear setbacks shall be at least 1 metre. Projections such as sunshades may extend up to 0.6 metres into the setback.",
+  "metadata": { "authority": "Sample", "year": 2026 }
+}
+
+
+########################################################################
+# 8. AI ASSISTANT (needs OPENAI_API_KEY in .env)
+########################################################################
+
+### 8.1 Ask a question
+#   required: question (min 2 chars); optional: propertyId, history (max 20 turns)
+POST {{base}}/agent/chat
+Content-Type: application/json
+
+{
+  "question": "What changed on survey number 123/4 in Yelahanka and which rules apply?",
+  "propertyId": "{{propertyId}}",
+  "history": [
+    { "role": "user", "content": "Which parcels have open alerts?" },
+    { "role": "assistant", "content": "Survey No. 123/4 in Yelahanka has 3 open alerts." }
+  ]
+}
+
+
+########################################################################
+# 9. CLEANUP
+########################################################################
+
+### 9.1 Delete the parcel created in 2.9 (cascades to its images, alerts, projects) -> 204
+DELETE {{base}}/properties/{{newProperty.response.body.id}}
